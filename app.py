@@ -2,12 +2,11 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import time
 
 st.set_page_config(page_title="Simulador Avanzado de Conveyor", layout="wide")
 
 st.title("Simulador Dinámico de Perfiles de Aceleración y Frenado (Conveyor)")
-st.markdown("Compara dos perfiles diferentes y visualiza la simulación cinemática en tiempo real.")
+st.markdown("Compara dos perfiles diferentes de forma fluida mediante animación nativa.")
 
 # --- BARRA LATERAL DE PARÁMETROS ---
 st.sidebar.header("📏 Geometría Global")
@@ -32,101 +31,78 @@ with col_cfg2:
 
 # --- FUNCIÓN DE CÁLCULO CINEMÁTICO ---
 def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist):
-    dt = 0.02
+    dt = 0.05  # Incrementado ligeramente para optimizar frames de animación
     t_max = 15.0
     steps = int(t_max / dt)
     
     t = np.zeros(steps)
     pos = np.zeros(steps)
     vel = np.zeros(steps)
-    acc = np.zeros(steps)
     
     p = 0.0
     v = 0.0
-    
-    # Posiciones clave de los sensores
-    # El sensor de reducción se encuentra a (length - s_dist)
     pos_sensor_red = length - s_dist
     pos_stop = length
-    
     state = "ACCEL_FAST"
     
     for i in range(1, steps):
         t[i] = t[i-1] + dt
         
-        # Máquina de estados realista del conveyor
         if state == "ACCEL_FAST":
-            a = accel
-            v += a * dt
+            v += accel * dt
             if v >= v_fast:
                 v = v_fast
-                a = 0.0
                 state = "CRUISE_FAST"
-                
         elif state == "CRUISE_FAST":
-            a = 0.0
-            # Al llegar al sensor de reducción de velocidad
             if p >= pos_sensor_red:
                 state = "DECEL_TO_SLOW"
-                
         elif state == "DECEL_TO_SLOW":
-            a = -decel
-            v += a * dt
+            v -= decel * dt
             if v <= v_slow:
                 v = v_slow
-                a = 0.0
                 state = "CRUISE_SLOW"
-                
         elif state == "CRUISE_SLOW":
-            a = 0.0
-            # Calcular distancia exacta necesaria para frenar a 0 desde v_slow con la desaceleración dada
             dist_frenado_nec = (v_slow**2) / (2 * decel) if decel > 0 else 0
             if p >= (pos_stop - dist_frenado_nec):
                 state = "DECEL_TO_STOP"
-                
         elif state == "DECEL_TO_STOP":
-            a = -decel
-            v += a * dt
+            v -= decel * dt
             if v <= 0:
                 v = 0.0
-                a = 0.0
                 state = "DONE"
-                
         elif state == "DONE":
-            a = 0.0
             v = 0.0
             
         p += v * dt
-        # Evitar pasar del límite físico del conveyor en la simulación matemática
         if p > length:
             p = length
             v = 0.0
-            a = 0.0
             
         pos[i] = p
         vel[i] = v
-        acc[i] = a
         
-        if state == "DONE" and i > 100 and np.all(vel[i-50:i] == 0):
-            # Recortar arrays al tamaño real de la simulación para limpieza
+        if state == "DONE" and i > 50 and np.all(vel[i-20:i] == 0):
             t = t[:i+1]
             pos = pos[:i+1]
             vel = vel[:i+1]
-            acc = acc[:i+1]
             break
             
-    return t, pos, vel, acc
+    return t, pos, vel
 
-t_a, pos_a, vel_a, acc_a_profile = calcular_perfil(v_fast_a, v_slow_a, acc_a, dec_a, conveyor_length, sensor_distance)
-t_b, pos_b, vel_b, acc_b_profile = calcular_perfil(v_fast_b, v_slow_b, acc_b, dec_b, conveyor_length, sensor_distance)
+t_a, pos_a, vel_a = calcular_perfil(v_fast_a, v_slow_a, acc_a, dec_a, conveyor_length, sensor_distance)
+t_b, pos_b, vel_b = calcular_perfil(v_fast_b, v_slow_b, acc_b, dec_b, conveyor_length, sensor_distance)
 
-# --- PANEL DE CONTROL DE ANIMACIÓN ---
-st.markdown("---")
-col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1, 2, 1])
-with col_ctrl1:
-    btn_play = st.button("▶️ Reproducir Simulación en Vivo", type="primary")
+# Normalizar longitudes de tiempo para la animación por frames
+max_steps = max(len(t_a), len(t_b))
+# Rellenar con el último valor estático para que ambas líneas duren el mismo número de pasos en la animación
+t_anim = np.linspace(0, max(t_a[-1], t_b[-1]), max_steps)
 
-# --- CONSTRUCCIÓN DE GRÁFICAS INTERACTIVAS (PLOTLY) ---
+pos_a_interp = np.interp(t_anim, t_a, pos_a)
+vel_a_interp = np.interp(t_anim, t_a, vel_a)
+pos_b_interp = np.interp(t_anim, t_b, pos_b)
+vel_b_interp = np.interp(t_anim, t_b, vel_b)
+
+# --- CONSTRUCCIÓN DE GRÁFICA CON FRAMES NATIVOS DE PLOTLY ---
 fig = make_subplots(
     rows=2, cols=1, 
     shared_xaxes=True,
@@ -134,58 +110,80 @@ fig = make_subplots(
     vertical_spacing=0.15
 )
 
-# Trazas estáticas completas (fondo tenue)
-fig.add_trace(go.Scatter(x=t_a, y=pos_a, mode='lines', name='Posición A', line=dict(color='rgba(31, 119, 180, 0.4)', width=2)), row=1, col=1)
-fig.add_trace(go.Scatter(x=t_b, y=pos_b, mode='lines', name='Posición B', line=dict(color='rgba(255, 127, 14, 0.4)', width=2)), row=1, col=1)
+# 1. Trazas de fondo estáticas (historial completo)
+fig.add_trace(go.Scatter(x=t_a, y=pos_a, mode='lines', name='Historial A', line=dict(color='rgba(31, 119, 180, 0.3)', width=2)), row=1, col=1)
+fig.add_trace(go.Scatter(x=t_b, y=pos_b, mode='lines', name='Historial B', line=dict(color='rgba(255, 127, 14, 0.3)', width=2)), row=1, col=1)
+fig.add_trace(go.Scatter(x=t_a, y=vel_a, mode='lines', name='Hist. Vel A', line=dict(color='rgba(31, 119, 180, 0.3)', width=2)), row=2, col=1)
+fig.add_trace(go.Scatter(x=t_b, y=vel_b, mode='lines', name='Hist. Vel B', line=dict(color='rgba(255, 127, 14, 0.3)', width=2)), row=2, col=1)
 
-fig.add_trace(go.Scatter(x=t_a, y=vel_a, mode='lines', name='Velocidad A', line=dict(color='rgba(31, 119, 180, 0.4)', width=2)), row=2, col=1)
-fig.add_trace(go.Scatter(x=t_b, y=vel_b, mode='lines', name='Velocidad B', line=dict(color='rgba(255, 127, 14, 0.4)', width=2)), row=2, col=1)
+# 2. Trazas móviles iniciales (Frame 0)
+fig.add_trace(go.Scatter(x=[pos_a_interp[0]], y=[vel_a_interp[0]], mode='markers', name='Pieza A', marker=dict(size=14, color='blue')), row=1, col=1) # Usaremos markers interactivos
+# Para la posición en row=1:
+fig.data[-1].x = [t_anim[0]]
+fig.data[-1].y = [pos_a_interp[0]]
 
-# Líneas de referencia de sensores en la gráfica de posición
+fig.add_trace(go.Scatter(x=[t_anim[0]], y=[pos_b_interp[0]], mode='markers', name='Pieza B', marker=dict(size=14, color='orange')), row=1, col=1)
+
+fig.add_trace(go.Scatter(x=[t_anim[0]], y=[vel_a_interp[0]], mode='markers', name='Vel A', marker=dict(size=12, color='blue')), row=2, col=1)
+fig.add_trace(go.Scatter(x=[t_anim[0]], y=[vel_b_interp[0]], mode='markers', name='Vel B', marker=dict(size=12, color='orange')), row=2, col=1)
+
+# Líneas de referencia
 fig.add_hline(y=conveyor_length, line_dash="dash", line_color="red", annotation_text="Sensor Stop (Fin)", row=1, col=1)
 fig.add_hline(y=conveyor_length - sensor_distance, line_dash="dot", line_color="orange", annotation_text="Sensor Reducción", row=1, col=1)
 
-# Trazas móviles (las "bolitas" que compiten)
-fig.add_trace(go.Scatter(x=[t_a[0]], y=[pos_a[0]], mode='markers', name='Pieza A', marker=dict(size=12, color='blue')), row=1, col=1)
-fig.add_trace(go.Scatter(x=[t_b[0]], y=[pos_b[0]], mode='markers', name='Pieza B', marker=dict(size=12, color='orange')), row=1, col=1)
+# Generar fotogramas para la animación nativa de Plotly
+frames = []
+for k in range(0, max_steps, 2):  # Salto de 2 para fluidez de rendimiento
+    frames.append(go.Frame(
+        data=[
+            # Mantener trazas estáticas iguales
+            go.Scatter(x=t_a, y=pos_a),
+            go.Scatter(x=t_b, y=pos_b),
+            go.Scatter(x=t_a, y=vel_a),
+            go.Scatter(x=t_b, y=vel_b),
+            # Actualizar marcadores móviles
+            go.Scatter(x=[t_anim[k]], y=[pos_a_interp[k]]),
+            go.Scatter(x=[t_anim[k]], y=[pos_b_interp[k]]),
+            go.Scatter(x=[t_anim[k]], y=[vel_a_interp[k]]),
+            go.Scatter(x=[t_anim[k]], y=[vel_b_interp[k]])
+        ],
+        name=str(k)
+    ))
 
-fig.add_trace(go.Scatter(x=[t_a[0]], y=[vel_a[0]], mode='markers', name='Vel A', marker=dict(size=10, color='blue')), row=2, col=1)
-fig.add_trace(go.Scatter(x=[t_b[0]], y=[vel_b[0]], mode='markers', name='Vel B', marker=dict(size=10, color='orange')), row=2, col=1)
+fig.frames = frames
 
-fig.update_layout(height=700, template="plotly_white", hovermode="x unified")
+# Configuración de Botones de Reproducción nativos dentro del gráfico
+fig.update_layout(
+    height=750,
+    template="plotly_white",
+    hovermode="x unified",
+    updatemenus=[{
+        "type": "buttons",
+        "showactive": False,
+        "buttons": [
+            {
+                "label": "▶️ Play",
+                "method": "animate",
+                "args": [None, {"frame": {"duration": 30, "redraw": False}, "fromcurrent": True, "transition": {"duration": 0}}]
+            },
+            {
+                "label": "⏸️ Pause",
+                "method": "animate",
+                "args": [[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate", "transition": {"duration": 0}}]
+            }
+        ],
+        "direction": "left",
+        "pad": {"r": 10, "t": 10},
+        "x": 0.1,
+        "xanchor": "right",
+        "y": 1.15,
+        "yanchor": "top"
+    }]
+)
+
 fig.update_xaxes(title_text="Tiempo (s)", row=2, col=1)
 fig.update_yaxes(title_text="Posición (mm)", row=1, col=1)
 fig.update_yaxes(title_text="Velocidad (mm/s)", row=2, col=1)
 
-# Contenedor donde se dibuja el gráfico en Streamlit
-chart_placeholder = st.empty()
-chart_placeholder.plotly_chart(fig, use_container_width=True)
-
-# --- LÓGICA DE ANIMACIÓN AL PRESIONAR PLAY ---
-if btn_play:
-    max_len = max(len(t_a), len(t_b))
-    anim_placeholder = st.empty()
-    
-    # Bucle de animación en tiempo real simulado
-    for i in range(0, max_len, 2): # Saltamos de 2 en 2 para fluidez
-        # Obtener índices seguros para ambos perfiles
-        idx_a = min(i, len(t_a) - 1)
-        idx_b = min(i, len(t_b) - 1)
-        
-        # Copiamos la figura y actualizamos solo las posiciones de los marcadores móviles
-        animated_fig = go.Figure(fig)
-        
-        # Actualizar marcadores de posición (índices 4 y 5)
-        animated_fig.data[4].x = [t_a[idx_a]]
-        animated_fig.data[4].y = [pos_a[idx_a]]
-        animated_fig.data[5].x = [t_b[idx_b]]
-        animated_fig.data[5].y = [pos_b[idx_b]]
-        
-        # Actualizar marcadores de velocidad (índices 6 y 7)
-        animated_fig.data[6].x = [t_a[idx_a]]
-        animated_fig.data[6].y = [vel_a[idx_a]]
-        animated_fig.data[7].x = [t_b[idx_b]]
-        animated_fig.data[7].y = [vel_b[idx_b]]
-        
-        chart_placeholder.plotly_chart(animated_fig, use_container_width=True, key=f"anim_{i}")
-        time.sleep(0.01) # Control de velocidad de reproducción en pantalla
+# Renderizar en Streamlit sin parpadeos
+st.plotly_chart(fig, use_container_width=True)
