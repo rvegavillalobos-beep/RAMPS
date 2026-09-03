@@ -2,11 +2,12 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import time
 
 st.set_page_config(page_title="Simulador Avanzado de Conveyor", layout="wide")
 
 st.title("Simulador Dinámico de Perfiles de Aceleración y Frenado (Conveyor)")
-st.markdown("Compara dos perfiles diferentes de forma fluida mediante animación nativa.")
+st.markdown("Compara dos perfiles diferentes y visualiza la cinemática real en tiempo real.")
 
 # --- BARRA LATERAL DE PARÁMETROS ---
 st.sidebar.header("📏 Geometría Global")
@@ -31,7 +32,7 @@ with col_cfg2:
 
 # --- FUNCIÓN DE CÁLCULO CINEMÁTICO ---
 def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist):
-    dt = 0.05  # Incrementado ligeramente para optimizar frames de animación
+    dt = 0.02
     t_max = 15.0
     steps = int(t_max / dt)
     
@@ -92,9 +93,8 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist):
 t_a, pos_a, vel_a = calcular_perfil(v_fast_a, v_slow_a, acc_a, dec_a, conveyor_length, sensor_distance)
 t_b, pos_b, vel_b = calcular_perfil(v_fast_b, v_slow_b, acc_b, dec_b, conveyor_length, sensor_distance)
 
-# Normalizar longitudes de tiempo para la animación por frames
+# Normalizar longitudes para la sincronización de la competencia
 max_steps = max(len(t_a), len(t_b))
-# Rellenar con el último valor estático para que ambas líneas duren el mismo número de pasos en la animación
 t_anim = np.linspace(0, max(t_a[-1], t_b[-1]), max_steps)
 
 pos_a_interp = np.interp(t_anim, t_a, pos_a)
@@ -102,7 +102,13 @@ vel_a_interp = np.interp(t_anim, t_a, vel_a)
 pos_b_interp = np.interp(t_anim, t_b, pos_b)
 vel_b_interp = np.interp(t_anim, t_b, vel_b)
 
-# --- CONSTRUCCIÓN DE GRÁFICA CON FRAMES NATIVOS DE PLOTLY ---
+# --- PANEL DE CONTROL ---
+st.markdown("---")
+col_btn1, col_btn2 = st.columns([1, 4])
+with col_btn1:
+    btn_play = st.button("▶️ Iniciar Competencia", type="primary")
+
+# --- CONSTRUCCIÓN DE LA GRÁFICA BASE ---
 fig = make_subplots(
     rows=2, cols=1, 
     shared_xaxes=True,
@@ -110,80 +116,49 @@ fig = make_subplots(
     vertical_spacing=0.15
 )
 
-# 1. Trazas de fondo estáticas (historial completo)
-fig.add_trace(go.Scatter(x=t_a, y=pos_a, mode='lines', name='Historial A', line=dict(color='rgba(31, 119, 180, 0.3)', width=2)), row=1, col=1)
-fig.add_trace(go.Scatter(x=t_b, y=pos_b, mode='lines', name='Historial B', line=dict(color='rgba(255, 127, 14, 0.3)', width=2)), row=1, col=1)
-fig.add_trace(go.Scatter(x=t_a, y=vel_a, mode='lines', name='Hist. Vel A', line=dict(color='rgba(31, 119, 180, 0.3)', width=2)), row=2, col=1)
-fig.add_trace(go.Scatter(x=t_b, y=vel_b, mode='lines', name='Hist. Vel B', line=dict(color='rgba(255, 127, 14, 0.3)', width=2)), row=2, col=1)
+# 1. Trazas de fondo estáticas (historial completo translúcido)
+fig.add_trace(go.Scatter(x=t_a, y=pos_a, mode='lines', name='Historial Pos A', line=dict(color='rgba(31, 119, 180, 0.3)', width=2)), row=1, col=1)
+fig.add_trace(go.Scatter(x=t_b, y=pos_b, mode='lines', name='Historial Pos B', line=dict(color='rgba(255, 127, 14, 0.3)', width=2)), row=1, col=1)
+fig.add_trace(go.Scatter(x=t_a, y=vel_a, mode='lines', name='Historial Vel A', line=dict(color='rgba(31, 119, 180, 0.3)', width=2)), row=2, col=1)
+fig.add_trace(go.Scatter(x=t_b, y=vel_b, mode='lines', name='Historial Vel B', line=dict(color='rgba(255, 127, 14, 0.3)', width=2)), row=2, col=1)
 
-# 2. Trazas móviles iniciales (Frame 0)
-fig.add_trace(go.Scatter(x=[pos_a_interp[0]], y=[vel_a_interp[0]], mode='markers', name='Pieza A', marker=dict(size=14, color='blue')), row=1, col=1) # Usaremos markers interactivos
-# Para la posición en row=1:
-fig.data[-1].x = [t_anim[0]]
-fig.data[-1].y = [pos_a_interp[0]]
-
+# 2. Trazas móviles (Las "bolitas" que se moverán con los valores correctos en tiempo real)
+fig.add_trace(go.Scatter(x=[t_anim[0]], y=[pos_a_interp[0]], mode='markers', name='Pieza A', marker=dict(size=14, color='blue')), row=1, col=1)
 fig.add_trace(go.Scatter(x=[t_anim[0]], y=[pos_b_interp[0]], mode='markers', name='Pieza B', marker=dict(size=14, color='orange')), row=1, col=1)
 
 fig.add_trace(go.Scatter(x=[t_anim[0]], y=[vel_a_interp[0]], mode='markers', name='Vel A', marker=dict(size=12, color='blue')), row=2, col=1)
 fig.add_trace(go.Scatter(x=[t_anim[0]], y=[vel_b_interp[0]], mode='markers', name='Vel B', marker=dict(size=12, color='orange')), row=2, col=1)
 
-# Líneas de referencia
+# Líneas de referencia fijas
 fig.add_hline(y=conveyor_length, line_dash="dash", line_color="red", annotation_text="Sensor Stop (Fin)", row=1, col=1)
 fig.add_hline(y=conveyor_length - sensor_distance, line_dash="dot", line_color="orange", annotation_text="Sensor Reducción", row=1, col=1)
 
-# Generar fotogramas para la animación nativa de Plotly
-frames = []
-for k in range(0, max_steps, 2):  # Salto de 2 para fluidez de rendimiento
-    frames.append(go.Frame(
-        data=[
-            # Mantener trazas estáticas iguales
-            go.Scatter(x=t_a, y=pos_a),
-            go.Scatter(x=t_b, y=pos_b),
-            go.Scatter(x=t_a, y=vel_a),
-            go.Scatter(x=t_b, y=vel_b),
-            # Actualizar marcadores móviles
-            go.Scatter(x=[t_anim[k]], y=[pos_a_interp[k]]),
-            go.Scatter(x=[t_anim[k]], y=[pos_b_interp[k]]),
-            go.Scatter(x=[t_anim[k]], y=[vel_a_interp[k]]),
-            go.Scatter(x=[t_anim[k]], y=[vel_b_interp[k]])
-        ],
-        name=str(k)
-    ))
-
-fig.frames = frames
-
-# Configuración de Botones de Reproducción nativos dentro del gráfico
-fig.update_layout(
-    height=750,
-    template="plotly_white",
-    hovermode="x unified",
-    updatemenus=[{
-        "type": "buttons",
-        "showactive": False,
-        "buttons": [
-            {
-                "label": "▶️ Play",
-                "method": "animate",
-                "args": [None, {"frame": {"duration": 30, "redraw": False}, "fromcurrent": True, "transition": {"duration": 0}}]
-            },
-            {
-                "label": "⏸️ Pause",
-                "method": "animate",
-                "args": [[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate", "transition": {"duration": 0}}]
-            }
-        ],
-        "direction": "left",
-        "pad": {"r": 10, "t": 10},
-        "x": 0.1,
-        "xanchor": "right",
-        "y": 1.15,
-        "yanchor": "top"
-    }]
-)
-
+fig.update_layout(height=750, template="plotly_white", hovermode="x unified", showlegend=True)
 fig.update_xaxes(title_text="Tiempo (s)", row=2, col=1)
 fig.update_yaxes(title_text="Posición (mm)", row=1, col=1)
 fig.update_yaxes(title_text="Velocidad (mm/s)", row=2, col=1)
 
-# Renderizar en Streamlit sin parpadeos
-st.plotly_chart(fig, use_container_width=True)
+# Contenedor gráfico único en Streamlit
+chart_container = st.empty()
+chart_container.plotly_chart(fig, use_container_width=True)
+
+# --- MOTOR DE ANIMACIÓN FLUIDO (CORREGIDO) ---
+if btn_play:
+    # Usamos plotly widget figure con .update_traces para evitar parpadeos y actualizar datos reales
+    for k in range(0, max_steps, 2):  # Salto de 2 en 2 para mantener fluidez
+        # Actualizar datos de las trazas móviles con los valores exactos interpolados
+        fig.data[4].x = [t_anim[k]]
+        fig.data[4].y = [pos_a_interp[k]]
+        
+        fig.data[5].x = [t_anim[k]]
+        fig.data[5].y = [pos_b_interp[k]]
+        
+        fig.data[6].x = [t_anim[k]]
+        fig.data[6].y = [vel_a_interp[k]]
+        
+        fig.data[7].x = [t_anim[k]]
+        fig.data[7].y = [vel_b_interp[k]]
+        
+        # Renderizar actualización limpia sin destruir el contenedor completo
+        chart_container.plotly_chart(fig, use_container_width=True, key=f"plot_frame_{k}")
+        time.sleep(0.015)  # Velocidad de reproducción visual
