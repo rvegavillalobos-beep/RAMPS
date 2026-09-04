@@ -1,11 +1,12 @@
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 st.set_page_config(page_title="Calculador de Perfil de Conveyor", layout="wide")
 
 st.title("Calculador de Perfiles de Aceleración y Frenado - Conveyor")
-st.markdown("Parámetros cinemáticos con identificación visual clara de sensores.")
+st.markdown("Gráficas interactivas con Plotly para hacer zoom, pan y análisis detallado.")
 
 # --- BARRA LATERAL DE PARÁMETROS ---
 st.sidebar.header("Geometría Global")
@@ -102,53 +103,73 @@ t_a, pos_a, vel_a, t_red_a, t_stop_a = calcular_perfil(speed_fast_a, speed_slow_
 if comparar:
     t_b, pos_b, vel_b, t_red_b, t_stop_b = calcular_perfil(speed_fast_b, speed_slow_b, accel_b, decel_b, conveyor_length, sensor_distance_b)
 
-# --- VISUALIZACIÓN EN GRÁFICAS ---
-col1, col2 = st.columns(2)
+# --- CONSTRUCCIÓN DE GRÁFICAS CON PLOTLY ---
+fig = make_subplots(
+    rows=1, cols=2, 
+    subplot_titles=("Perfil de Velocidad", "Perfil de Posición"),
+    horizontal_spacing=0.12
+)
 
-with col1:
-    st.subheader("Perfil de Velocidad")
-    fig_v, ax_v = plt.subplots(figsize=(6, 4.5))
-    
-    # Perfil A (Tonos Cálidos: Azul / Naranja / Rojo)
-    ax_v.plot(t_a, vel_a, color="#1f77b4", linewidth=2.5, label="Velocidad A")
-    ax_v.axvline(x=t_red_a, color="#ff7f0e", linestyle=":", linewidth=2, label="Reducción A")
-    ax_v.axvline(x=t_stop_a, color="#d62728", linestyle="--", linewidth=2, label="Stop A")
-    
-    # Perfil B (Tonos Fríos y Contraste Alto: Morado / Cian / Magenta)
-    if comparar:
-        ax_v.plot(t_b, vel_b, color="#9467bd", linewidth=2.5, linestyle="-.", label="Velocidad B")
-        ax_v.axvline(x=t_red_b, color="#17becf", linestyle=":", linewidth=2, label="Reducción B")
-        ax_v.axvline(x=t_stop_b, color="#e377c2", linestyle="--", linewidth=2, label="Stop B")
-        
-    ax_v.set_xlabel("Tiempo (s)")
-    ax_v.set_ylabel("Velocidad (mm/s)")
-    ax_v.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=2, fontsize=7)
-    ax_v.grid(True, linestyle="--", alpha=0.6)
-    fig_v.subplots_adjust(bottom=0.25)
-    st.pyplot(fig_v)
+# --- GRÁFICA DE VELOCIDAD (Columna 1) ---
+fig.add_trace(go.Scatter(x=t_a, y=vel_a, mode='lines', name='Velocidad A', line=dict(color='#1f77b4', width=3)), row=1, col=1)
+fig.add_shape(type="line", x0=t_red_a, x1=t_red_a, y0=0, y1=max(vel_a)*1.1, line=dict(color="#ff7f0e", width=2, dash="dot"), row=1, col=1)
+fig.add_shape(type="line", x0=t_stop_a, x1=t_stop_a, y0=0, y1=max(vel_a)*1.1, line=dict(color="#d62728", width=2, dash="dash"), row=1, col=1)
 
-with col2:
-    st.subheader("Perfil de Posición")
-    fig_p, ax_p = plt.subplots(figsize=(6, 4.5))
-    
-    ax_p.axhline(y=conveyor_length, color='#d62728', linestyle='--', alpha=0.6, label='Fin Conveyor (Stop)')
-    
-    # Perfil A
-    ax_p.plot(t_a, pos_a, color="#2ca02c", linewidth=2.5, label="Posición A")
-    ax_p.axhline(y=conveyor_length - sensor_distance_a, color='#ff7f0e', linestyle=':', linewidth=2, label='Sensor Red. A')
-    ax_p.axvline(x=t_red_a, color="#ff7f0e", linestyle=":", alpha=0.5)
-    ax_p.axvline(x=t_stop_a, color="#d62728", linestyle="--", alpha=0.5)
-    
-    # Perfil B
-    if comparar:
-        ax_p.plot(t_b, pos_b, color="#8c564b", linewidth=2.5, linestyle="-.", label="Posición B")
-        ax_p.axhline(y=conveyor_length - sensor_distance_b, color='#17becf', linestyle=':', linewidth=2, label='Sensor Red. B')
-        ax_p.axvline(x=t_red_b, color="#17becf", linestyle=":", alpha=0.5)
-        ax_p.axvline(x=t_stop_b, color="#e377c2", linestyle="--", alpha=0.5)
-        
-    ax_p.set_xlabel("Tiempo (s)")
-    ax_p.set_ylabel("Posición (mm)")
-    ax_p.legend(loc="upper center", bbox_to_anchor=(0.5, -0.28), ncol=2, fontsize=6.5)
-    ax_p.grid(True, linestyle="--", alpha=0.6)
-    fig_p.subplots_adjust(bottom=0.28)
-    st.pyplot(fig_p)
+if comparar:
+    fig.add_trace(go.Scatter(x=t_b, y=vel_b, mode='lines', name='Velocidad B', line=dict(color='#9467bd', width=3, dash='dashdot')), row=1, col=1)
+    fig.add_shape(type="line", x0=t_red_b, x1=t_red_b, y0=0, y1=max(max(vel_a), max(vel_b))*1.1, line=dict(color="#17becf", width=2, dash="dot"), row=1, col=1)
+    fig.add_shape(type="line", x0=t_stop_b, x1=t_stop_b, y0=0, y1=max(max(vel_a), max(vel_b))*1.1, line=dict(color="#e377c2", width=2, dash="dash"), row=1, col=1)
+
+# --- GRÁFICA DE POSICIÓN (Columna 2) ---
+fig.add_trace(go.Scatter(x=t_a, y=pos_a, mode='lines', name='Posición A', line=dict(color='#2ca02c', width=3)), row=1, col=2)
+fig.add_shape(type="line", x0=0, x1=t_a[-1], y0=conveyor_length, y1=conveyor_length, line=dict(color="#d62728", width=2, dash="dash"), row=1, col=2)
+fig.add_shape(type="line", x0=0, x1=t_a[-1], y0=conveyor_length-sensor_distance_a, y1=conveyor_length-sensor_distance_a, line=dict(color="#ff7f0e", width=2, dash="dot"), row=1, col=2)
+fig.add_shape(type="line", x0=t_red_a, x1=t_red_a, y0=0, y1=conveyor_length, line=dict(color="#ff7f0e", width=1.5, dash="dot", opacity=0.5), row=1, col=2)
+fig.add_shape(type="line", x0=t_stop_a, x1=t_stop_a, y0=0, y1=conveyor_length, line=dict(color="#d62728", width=1.5, dash="dash", opacity=0.5), row=1, col=2)
+
+if comparar:
+    fig.add_trace(go.Scatter(x=t_b, y=pos_b, mode='lines', name='Posición B', line=dict(color='#8c564b', width=3, dash='dashdot')), row=1, col=2)
+    fig.add_shape(type="line", x0=0, x1=t_b[-1], y0=conveyor_length-sensor_distance_b, y1=conveyor_length-sensor_distance_b, line=dict(color="#17becf", width=2, dash="dot"), row=1, col=2)
+    fig.add_shape(type="line", x0=t_red_b, x1=t_red_b, y0=0, y1=conveyor_length, line=dict(color="#17becf", width=1.5, dash="dot", opacity=0.5), row=1, col=2)
+    fig.add_shape(type="line", x0=t_stop_b, x1=t_stop_b, y0=0, y1=conveyor_length, line=dict(color="#e377c2", width=1.5, dash="dash", opacity=0.5), row=1, col=2)
+
+# Configuración general de ejes y layout interactivo nativo de Plotly
+fig.update_xaxes(title_text="Tiempo (s)", row=1, col=1)
+fig.update_yaxes(title_text="Velocidad (mm/s)", row=1, col=1)
+fig.update_xaxes(title_text="Tiempo (s)", row=1, col=2)
+fig.update_yaxes(title_text="Posición (mm)", row=1, col=2)
+
+fig.update_layout(
+    height=550,
+    template="plotly_white",
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# --- MÉTRICAS COMPARATIVAS ---
+st.markdown("---")
+st.subheader("⏱️ Desglose de Tiempos del Ciclo")
+
+if not comparar:
+    col_m0, col_m1, col_m2, col_m3, col_m4 = st.columns(5)
+    col_m0.metric("Tiempo Total Ciclo", f"{t_a[-1]:.2f} s")
+    col_m1.metric("Aceleración", f"{t_red_a:.2f} s")
+    col_m2.metric("Desacel. a Slow", f"{(t_stop_a - t_red_a):.2f} s")
+    col_m3.metric("Velocidad Slow", f"{(t_a[-1] - t_stop_a):.2f} s")
+    col_m4.metric("Frenado Final", f"{(t_a[-1] - t_stop_a):.2f} s")
+else:
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("**Perfil A**")
+        ca1, ca2, ca3 = st.columns(3)
+        ca1.metric("Total Ciclo A", f"{t_a[-1]:.2f} s")
+        ca2.metric("Sensor A", f"{sensor_distance_a} mm")
+        ca3.metric("Frenado A", f"{decel_a} mm/s²")
+    with col_b:
+        st.markdown("**Perfil B**")
+        cb1, cb2, cb3 = st.columns(3)
+        cb1.metric("Total Ciclo B", f"{t_b[-1]:.2f} s")
+        cb2.metric("Sensor B", f"{sensor_distance_b} mm")
+        cb3.metric("Frenado B", f"{decel_b} mm/s²")
