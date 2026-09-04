@@ -5,18 +5,18 @@ import matplotlib.pyplot as plt
 st.set_page_config(page_title="Calculador de Perfil de Conveyor", layout="wide")
 
 st.title("Calculador de Perfiles de Aceleración y Frenado - Conveyor")
-st.markdown("Parámetros cinemáticos con comparación opcional de doble perfil.")
+st.markdown("Parámetros cinemáticos con comparación opcional de doble perfil y sensores independientes.")
 
 # --- BARRA LATERAL DE PARÁMETROS ---
 st.sidebar.header("Geometría Global")
 conveyor_length = st.sidebar.number_input("Largo total del conveyor (mm)", value=3000.0, step=100.0)
-sensor_distance = st.sidebar.number_input("Distancia Sensor Reducción a Stop (mm)", value=800.0, step=50.0)
 
 st.sidebar.header("Perfil Principal (Perfil A)")
 speed_fast_a = st.sidebar.number_input("SPEED_AUTO_FAST A (mm/s)", value=300.0, step=10.0)
 speed_slow_a = st.sidebar.number_input("SPEED_AUTO_SLOW A (mm/s)", value=100.0, step=10.0)
 accel_a = st.sidebar.number_input("RAMP_ACCEL A (mm/s²)", value=600.0, step=50.0)
 decel_a = st.sidebar.number_input("RAMP_DECEL A (mm/s²)", value=600.0, step=50.0)
+sensor_distance_a = st.sidebar.number_input("Distancia Sensor Reducción A (mm)", value=800.0, step=50.0)
 
 # Toggle para activar el segundo perfil
 st.sidebar.markdown("---")
@@ -28,6 +28,7 @@ if comparar:
     speed_slow_b = st.sidebar.number_input("SPEED_AUTO_SLOW B (mm/s)", value=120.0, step=10.0)
     accel_b = st.sidebar.number_input("RAMP_ACCEL B (mm/s²)", value=800.0, step=50.0)
     decel_b = st.sidebar.number_input("RAMP_DECEL B (mm/s²)", value=400.0, step=50.0)
+    sensor_distance_b = st.sidebar.number_input("Distancia Sensor Reducción B (mm)", value=1000.0, step=50.0)
 
 # --- FUNCIÓN DE CÁLCULO CINEMÁTICO ---
 def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist):
@@ -99,11 +100,11 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist):
     return t, pos, vel, t_sensor_red, t_brake_start
 
 # Calcular Perfil A
-t_a, pos_a, vel_a, t_red_a, t_stop_a = calcular_perfil(speed_fast_a, speed_slow_a, accel_a, decel_a, conveyor_length, sensor_distance)
+t_a, pos_a, vel_a, t_red_a, t_stop_a = calcular_perfil(speed_fast_a, speed_slow_a, accel_a, decel_a, conveyor_length, sensor_distance_a)
 
 # Calcular Perfil B si está activo
 if comparar:
-    t_b, pos_b, vel_b, t_red_b, t_stop_b = calcular_perfil(speed_fast_b, speed_slow_b, accel_b, decel_b, conveyor_length, sensor_distance)
+    t_b, pos_b, vel_b, t_red_b, t_stop_b = calcular_perfil(speed_fast_b, speed_slow_b, accel_b, decel_b, conveyor_length, sensor_distance_b)
 
 # --- VISUALIZACIÓN EN GRÁFICAS ---
 col1, col2 = st.columns(2)
@@ -134,26 +135,27 @@ with col2:
     st.subheader("Perfil de Posición")
     fig_p, ax_p = plt.subplots(figsize=(6, 4.5))
     
-    # Referencias geométricas fijas
+    # Referencia geométrica fija de fin de conveyor
     ax_p.axhline(y=conveyor_length, color='red', linestyle='--', alpha=0.5, label='Fin Conveyor (Stop)')
-    ax_p.axhline(y=conveyor_length - sensor_distance, color='orange', linestyle=':', alpha=0.5, label='Sensor Reducción')
     
     # Perfil A
     ax_p.plot(t_a, pos_a, color="tab:green", linewidth=2.5, label="Posición A")
+    ax_p.axhline(y=conveyor_length - sensor_distance_a, color='orange', linestyle=':', alpha=0.5, label='Sensor Reducción A')
     ax_p.axvline(x=t_red_a, color="orange", linestyle=":", alpha=0.5)
     ax_p.axvline(x=t_stop_a, color="red", linestyle="--", alpha=0.5)
     
     # Perfil B (si activo)
     if comparar:
         ax_p.plot(t_b, pos_b, color="tab:cyan", linewidth=2.5, linestyle="-.", label="Posición B")
+        ax_p.axhline(y=conveyor_length - sensor_distance_b, color='gold', linestyle=':', alpha=0.5, label='Sensor Reducción B')
         ax_p.axvline(x=t_red_b, color="gold", linestyle=":", alpha=0.5)
         ax_p.axvline(x=t_stop_b, color="deeppink", linestyle="--", alpha=0.5)
         
     ax_p.set_xlabel("Tiempo (s)")
     ax_p.set_ylabel("Posición (mm)")
-    ax_p.legend(loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=2, fontsize=7)
+    ax_p.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=2, fontsize=6.5)
     ax_p.grid(True, linestyle="--", alpha=0.6)
-    fig_p.subplots_adjust(bottom=0.25)
+    fig_p.subplots_adjust(bottom=0.28)
     st.pyplot(fig_p)
 
 # --- MÉTRICAS COMPARATIVAS ---
@@ -163,7 +165,7 @@ st.subheader("⏱️ Desglose de Tiempos del Ciclo")
 if not comparar:
     col_m0, col_m1, col_m2, col_m3, col_m4 = st.columns(5)
     col_m0.metric("Tiempo Total Ciclo", f"{t_a[-1]:.2f} s")
-    col_m1.metric("Aceleración", f"{t_red_a:.2f} s" if 't_red_a' in locals() else "0 s") # Simplificado de métrica pura
+    col_m1.metric("Aceleración", f"{t_red_a:.2f} s")
     col_m2.metric("Desacel. a Slow", f"{(t_stop_a - t_red_a):.2f} s")
     col_m3.metric("Velocidad Slow", f"{(t_a[-1] - t_stop_a):.2f} s")
     col_m4.metric("Frenado Final", f"{(t_a[-1] - t_stop_a):.2f} s")
@@ -173,11 +175,11 @@ else:
         st.markdown("**Perfil A**")
         ca1, ca2, ca3 = st.columns(3)
         ca1.metric("Total Ciclo A", f"{t_a[-1]:.2f} s")
-        ca2.metric("Máx Fast A", f"{speed_fast_a} mm/s")
+        ca2.metric("Sensor A", f"{sensor_distance_a} mm")
         ca3.metric("Frenado A", f"{decel_a} mm/s²")
     with col_b:
         st.markdown("**Perfil B**")
         cb1, cb2, cb3 = st.columns(3)
         cb1.metric("Total Ciclo B", f"{t_b[-1]:.2f} s")
-        cb2.metric("Máx Fast B", f"{speed_fast_b} mm/s")
+        cb2.metric("Sensor B", f"{sensor_distance_b} mm")
         cb3.metric("Frenado B", f"{decel_b} mm/s²")
