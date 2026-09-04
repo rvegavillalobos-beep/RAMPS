@@ -124,14 +124,14 @@ if comparar:
 fig.add_trace(go.Scatter(x=t_a, y=pos_a, mode='lines', name='Posición A', line=dict(color='#2ca02c', width=3)), row=1, col=2)
 fig.add_shape(type="line", x0=0, x1=t_a[-1], y0=conveyor_length, y1=conveyor_length, line=dict(color="#d62728", width=2, dash="dash"), row=1, col=2)
 fig.add_shape(type="line", x0=0, x1=t_a[-1], y0=conveyor_length-sensor_distance_a, y1=conveyor_length-sensor_distance_a, line=dict(color="#ff7f0e", width=2, dash="dot"), row=1, col=2)
-fig.add_shape(type="line", x0=t_red_a, x1=t_red_a, y0=0, y1=conveyor_length, line=dict(color="#ff7f0e", width=1.5, dash="dot", opacity=0.5), row=1, col=2)
-fig.add_shape(type="line", x0=t_stop_a, x1=t_stop_a, y0=0, y1=conveyor_length, line=dict(color="#d62728", width=1.5, dash="dash", opacity=0.5), row=1, col=2)
+fig.add_shape(type="line", x0=t_red_a, x1=t_red_a, y0=0, y1=conveyor_length, line=dict(color="rgba(255, 127, 14, 0.5)", width=1.5, dash="dot"), row=1, col=2)
+fig.add_shape(type="line", x0=t_stop_a, x1=t_stop_a, y0=0, y1=conveyor_length, line=dict(color="rgba(214, 39, 40, 0.5)", width=1.5, dash="dash"), row=1, col=2)
 
 if comparar:
     fig.add_trace(go.Scatter(x=t_b, y=pos_b, mode='lines', name='Posición B', line=dict(color='#8c564b', width=3, dash='dashdot')), row=1, col=2)
     fig.add_shape(type="line", x0=0, x1=t_b[-1], y0=conveyor_length-sensor_distance_b, y1=conveyor_length-sensor_distance_b, line=dict(color="#17becf", width=2, dash="dot"), row=1, col=2)
-    fig.add_shape(type="line", x0=t_red_b, x1=t_red_b, y0=0, y1=conveyor_length, line=dict(color="#17becf", width=1.5, dash="dot", opacity=0.5), row=1, col=2)
-    fig.add_shape(type="line", x0=t_stop_b, x1=t_stop_b, y0=0, y1=conveyor_length, line=dict(color="#e377c2", width=1.5, dash="dash", opacity=0.5), row=1, col=2)
+    fig.add_shape(type="line", x0=t_red_b, x1=t_red_b, y0=0, y1=conveyor_length, line=dict(color="rgba(23, 190, 207, 0.5)", width=1.5, dash="dot"), row=1, col=2)
+    fig.add_shape(type="line", x0=t_stop_b, x1=t_stop_b, y0=0, y1=conveyor_length, line=dict(color="rgba(227, 119, 194, 0.5)", width=1.5, dash="dash"), row=1, col=2)
 
 # Configuración general de ejes y layout interactivo nativo de Plotly
 fig.update_xaxes(title_text="Tiempo (s)", row=1, col=1)
