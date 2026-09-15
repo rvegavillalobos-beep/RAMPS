@@ -8,7 +8,7 @@ st.set_page_config(page_title="Calculador de Perfil de Conveyor", layout="wide")
 st.title("Calculador de Perfiles de Aceleración y Frenado - Conveyor")
 st.markdown("Gráficas interactivas con Plotly para hacer zoom, pan y análisis detallado.")
 
-# --- INICIALIZACIÓN DE ESTADOS (Valores Default Solicitados) ---
+# --- INICIALIZACIÓN DE ESTADOS ---
 defaults = {
     "conveyor_length": 3000.0,
     "speed_fast_a": 300.0,
@@ -16,13 +16,15 @@ defaults = {
     "accel_a": 300.0,
     "decel_a": 300.0,
     "sensor_distance_a": 150.0,
+    "ramp_stop_a": 150.0,  # <-- Nuevo parámetro en ms (SEW)
     
     "comparar": False,
     "speed_fast_b": 450.0,
     "speed_slow_b": 120.0,
     "accel_b": 400.0,
     "decel_b": 300.0,
-    "sensor_distance_b": 150.0
+    "sensor_distance_b": 150.0,
+    "ramp_stop_b": 0.0     # <-- Nuevo parámetro B en ms
 }
 
 for key, val in defaults.items():
@@ -39,6 +41,7 @@ st.sidebar.number_input("SPEED_AUTO_SLOW A (mm/s)", value=st.session_state.speed
 st.sidebar.number_input("RAMP_ACCEL A (mm/s²)", value=st.session_state.accel_a, step=50.0, key="accel_a")
 st.sidebar.number_input("RAMP_DECEL A (mm/s²)", value=st.session_state.decel_a, step=50.0, key="decel_a")
 st.sidebar.number_input("Distancia Sensor Reducción A (mm)", value=st.session_state.sensor_distance_a, step=50.0, key="sensor_distance_a")
+st.sidebar.number_input("RAMP_STOP A (ms)", value=st.session_state.ramp_stop_a, step=10.0, min_value=0.0, key="ramp_stop_a", help="Tiempo de rampa de parada en el drive SEW al tocar el sensor Stop")
 
 st.sidebar.markdown("---")
 st.sidebar.checkbox("Comparar con Perfil B", value=st.session_state.comparar, key="comparar")
@@ -50,11 +53,12 @@ if st.session_state.comparar:
     st.sidebar.number_input("RAMP_ACCEL B (mm/s²)", value=st.session_state.accel_b, step=50.0, key="accel_b")
     st.sidebar.number_input("RAMP_DECEL B (mm/s²)", value=st.session_state.decel_b, step=50.0, key="decel_b")
     st.sidebar.number_input("Distancia Sensor Reducción B (mm)", value=st.session_state.sensor_distance_b, step=50.0, key="sensor_distance_b")
+    st.sidebar.number_input("RAMP_STOP B (ms)", value=st.session_state.ramp_stop_b, step=10.0, min_value=0.0, key="ramp_stop_b")
 
-# --- FUNCIÓN DE CÁLCULO CINEMÁTICO ---
-def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist):
-    dt = 0.01
-    t_max = 20.0
+# --- FUNCIÓN DE CÁLCULO CINEMÁTICO CORREGIDA ---
+def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms):
+    dt = 0.001  # Paso de tiempo de 1 ms para alta precisión
+    t_max = 25.0
     steps = int(t_max / dt)
     
     t = np.zeros(steps)
@@ -69,9 +73,15 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist):
     
     t_accel_end = 0.0
     t_sensor_red = 0.0
-    t_slow_reached = 0.0
-    t_brake_start = 0.0
+    t_sensor_stop = 0.0
     
+    # Calcular aceleración de freno para RAMP_STOP (mm/s²)
+    # Si RAMP_STOP > 0, desacelera desde v_slow hasta 0 en ramp_stop_ms
+    if ramp_stop_ms > 0:
+        a_stop = v_slow / (ramp_stop_ms / 1000.0)
+    else:
+        a_stop = 1e6  # Paro casi instantáneo por simulación
+        
     for i in range(1, steps):
         t[i] = t[i-1] + dt
         
@@ -89,15 +99,18 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist):
             v -= decel * dt
             if v <= v_slow:
                 v = v_slow
-                t_slow_reached = t[i]
                 state = "CRUISE_SLOW"
         elif state == "CRUISE_SLOW":
-            dist_frenado_nec = (v_slow**2) / (2 * decel) if decel > 0 else 0
-            if p >= (pos_stop - dist_frenado_nec):
-                t_brake_start = t[i]
-                state = "DECEL_TO_STOP"
+            # Avanza a v_slow hasta tocar físicamente el sensor de stop
+            if p >= pos_stop:
+                t_sensor_stop = t[i]
+                if ramp_stop_ms <= 0:
+                    v = 0.0
+                    state = "DONE"
+                else:
+                    state = "DECEL_TO_STOP"
         elif state == "DECEL_TO_STOP":
-            v -= decel * dt
+            v -= a_stop * dt
             if v <= 0:
                 v = 0.0
                 state = "DONE"
@@ -105,10 +118,6 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist):
             v = 0.0
             
         p += v * dt
-        if p > length:
-            p = length
-            v = 0.0
-            
         pos[i] = p
         vel[i] = v
         
@@ -118,19 +127,29 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist):
             vel = vel[:i+1]
             break
             
-    return t, pos, vel, t_sensor_red, t_brake_start
+    # Distancia de rebasamiento (overrun)
+    dist_overrun = pos[-1] - pos_stop
+    
+    # Deceleración en Gs generada en el paro
+    decel_stop_m_s2 = (a_stop if ramp_stop_ms > 0 else 0.1 / dt) / 1000.0
+    g_force_stop = decel_stop_m_s2 / 9.81 if ramp_stop_ms > 0 else 0.0
+    
+    return t, pos, vel, t_sensor_red, t_sensor_stop, dist_overrun, g_force_stop
 
-t_a, pos_a, vel_a, t_red_a, t_stop_a = calcular_perfil(
+# Ejecución de cálculos
+t_a, pos_a, vel_a, t_red_a, t_stop_a, overrun_a, g_a = calcular_perfil(
     st.session_state.speed_fast_a, st.session_state.speed_slow_a, 
     st.session_state.accel_a, st.session_state.decel_a, 
-    st.session_state.conveyor_length, st.session_state.sensor_distance_a
+    st.session_state.conveyor_length, st.session_state.sensor_distance_a,
+    st.session_state.ramp_stop_a
 )
 
 if st.session_state.comparar:
-    t_b, pos_b, vel_b, t_red_b, t_stop_b = calcular_perfil(
+    t_b, pos_b, vel_b, t_red_b, t_stop_b, overrun_b, g_b = calcular_perfil(
         st.session_state.speed_fast_b, st.session_state.speed_slow_b, 
         st.session_state.accel_b, st.session_state.decel_b, 
-        st.session_state.conveyor_length, st.session_state.sensor_distance_b
+        st.session_state.conveyor_length, st.session_state.sensor_distance_b,
+        st.session_state.ramp_stop_b
     )
 
 # --- CONSTRUCCIÓN DE GRÁFICAS CON PLOTLY ---
@@ -155,60 +174,49 @@ if st.session_state.comparar:
 fig.add_trace(go.Scatter(x=t_a, y=pos_a, mode='lines', name='Posición A', line=dict(color='#2ca02c', width=3)), row=1, col=2)
 fig.add_shape(type="line", x0=0, x1=t_a[-1], y0=st.session_state.conveyor_length, y1=st.session_state.conveyor_length, line=dict(color="#d62728", width=2, dash="dash"), row=1, col=2)
 fig.add_shape(type="line", x0=0, x1=t_a[-1], y0=st.session_state.conveyor_length-st.session_state.sensor_distance_a, y1=st.session_state.conveyor_length-st.session_state.sensor_distance_a, line=dict(color="#ff7f0e", width=2, dash="dot"), row=1, col=2)
-fig.add_shape(type="line", x0=t_red_a, x1=t_red_a, y0=0, y1=st.session_state.conveyor_length, line=dict(color="rgba(255, 127, 14, 0.5)", width=1.5, dash="dot"), row=1, col=2)
-fig.add_shape(type="line", x0=t_stop_a, x1=t_stop_a, y0=0, y1=st.session_state.conveyor_length, line=dict(color="rgba(214, 39, 40, 0.5)", width=1.5, dash="dash"), row=1, col=2)
 
 if st.session_state.comparar:
     fig.add_trace(go.Scatter(x=t_b, y=pos_b, mode='lines', name='Posición B', line=dict(color='#8c564b', width=3, dash='dashdot')), row=1, col=2)
     fig.add_shape(type="line", x0=0, x1=t_b[-1], y0=st.session_state.conveyor_length-st.session_state.sensor_distance_b, y1=st.session_state.conveyor_length-st.session_state.sensor_distance_b, line=dict(color="#17becf", width=2, dash="dot"), row=1, col=2)
-    fig.add_shape(type="line", x0=t_red_b, x1=t_red_b, y0=0, y1=st.session_state.conveyor_length, line=dict(color="rgba(23, 190, 207, 0.5)", width=1.5, dash="dot"), row=1, col=2)
-    fig.add_shape(type="line", x0=t_stop_b, x1=t_stop_b, y0=0, y1=st.session_state.conveyor_length, line=dict(color="rgba(227, 119, 194, 0.5)", width=1.5, dash="dash"), row=1, col=2)
 
-# Configuración de ejes y diseño general con leyenda externa en la parte baja
 fig.update_xaxes(title_text="Tiempo (s)", row=1, col=1)
 fig.update_yaxes(title_text="Velocidad (mm/s)", row=1, col=1)
 fig.update_xaxes(title_text="Tiempo (s)", row=1, col=2)
 fig.update_yaxes(title_text="Posición (mm)", row=1, col=2)
 
 fig.update_layout(
-    height=600,
+    height=550,
     template="plotly_white",
     hovermode="x unified",
-    legend=dict(
-        orientation="h",
-        yanchor="top",
-        y=-0.22,
-        xanchor="center",
-        x=0.5,
-        font=dict(size=10)
-    ),
+    legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="center", x=0.5, font=dict(size=10)),
     margin=dict(b=120)
 )
 
 st.plotly_chart(fig, use_container_width=True)
 
-# --- MÉTRICAS COMPARATIVAS ---
+# --- MÉTRICAS DE PARO Y OVERRUN ---
+st.markdown("---")
+st.subheader("🎯 Análisis de Paro y Rebasamiento (Overrun)")
+
+col_o1, col_o2, col_o3 = st.columns(3)
+col_o1.metric("Distancia Rebasada (Overrun A)", f"{overrun_a:.2f} mm", help="Distancia recorrida tras la activación del sensor Stop")
+col_o2.metric("Posición Final de Paro A", f"{pos_a[-1]:.2f} mm")
+col_o3.metric("Aceleración de Impacto", f"{g_a:.3f} G" if st.session_state.ramp_stop_a > 0 else "Paro Seco / Inercial")
+
+if st.session_state.comparar:
+    st.markdown("**Comparativa de Rebasamiento con Perfil B:**")
+    col_ob1, col_ob2, col_ob3 = st.columns(3)
+    col_ob1.metric("Distancia Rebasada (Overrun B)", f"{overrun_b:.2f} mm")
+    col_ob2.metric("Posición Final de Paro B", f"{pos_b[-1]:.2f} mm")
+    col_ob3.metric("Aceleración de Impacto B", f"{g_b:.3f} G" if st.session_state.ramp_stop_b > 0 else "Paro Seco / Inercial")
+
+# --- MÉTRICAS DE TIEMPO DEL CICLO ---
 st.markdown("---")
 st.subheader("⏱️ Desglose de Tiempos del Ciclo")
 
 if not st.session_state.comparar:
-    col_m0, col_m1, col_m2, col_m3, col_m4 = st.columns(5)
+    col_m0, col_m1, col_m2, col_m3 = st.columns(4)
     col_m0.metric("Tiempo Total Ciclo", f"{t_a[-1]:.2f} s")
-    col_m1.metric("Aceleración", f"{t_red_a:.2f} s")
-    col_m2.metric("Desacel. a Slow", f"{(t_stop_a - t_red_a):.2f} s")
-    col_m3.metric("Velocidad Slow", f"{(t_a[-1] - t_stop_a):.2f} s")
-    col_m4.metric("Frenado Final", f"{(t_a[-1] - t_stop_a):.2f} s")
-else:
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.markdown("**Perfil A**")
-        ca1, ca2, ca3 = st.columns(3)
-        ca1.metric("Total Ciclo A", f"{t_a[-1]:.2f} s")
-        ca2.metric("Sensor A", f"{st.session_state.sensor_distance_a} mm")
-        ca3.metric("Frenado A", f"{st.session_state.decel_a} mm/s²")
-    with col_b:
-        st.markdown("**Perfil B**")
-        cb1, cb2, cb3 = st.columns(3)
-        cb1.metric("Total Ciclo B", f"{t_b[-1]:.2f} s")
-        cb2.metric("Sensor B", f"{st.session_state.sensor_distance_b} mm")
-        cb3.metric("Frenado B", f"{st.session_state.decel_b} mm/s²")
+    col_m1.metric("Tiempo a Sensor Reducción", f"{t_red_a:.2f} s")
+    col_m2.metric("Tiempo a Sensor Stop", f"{t_stop_a:.2f} s")
+    col_m3.metric("Tiempo en Rampa Stop", f"{(t_a[-1] - t_stop_a):.3f} s")
