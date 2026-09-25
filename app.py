@@ -146,14 +146,24 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
         deslizamiento_mm = dist_freno_pieza - dist_freno_conveyor
         g_pieza_real = g_max_pieza
     else:
+        dist_freno_pieza = (v_slow ** 2) / (2.0 * a_stop_conveyor)
+        dist_freno_conveyor = dist_freno_pieza
         deslizamiento_mm = 0.0
         g_pieza_real = g_conveyor
         
-    return t, pos, vel, t_sensor_red, t_sensor_stop, dist_overrun_conveyor, g_conveyor, g_pieza_real, se_desliza, deslizamiento_mm
+    details = {
+        "ramp_stop_real_ms": ramp_stop_real_ms,
+        "a_stop_conveyor": a_stop_conveyor,
+        "a_max_pieza": a_max_pieza,
+        "dist_freno_pieza": dist_freno_pieza,
+        "dist_freno_conveyor": dist_freno_conveyor
+    }
+        
+    return t, pos, vel, t_sensor_red, t_sensor_stop, dist_overrun_conveyor, g_conveyor, g_pieza_real, se_desliza, deslizamiento_mm, details
 
 
 # --- SIMULATION EXECUTION ---
-t_a, pos_a, vel_a, t_red_a, t_stop_a, overrun_a, g_conv_a, g_pieza_a, desliza_a, d_desliza_a = calcular_perfil(
+t_a, pos_a, vel_a, t_red_a, t_stop_a, overrun_a, g_conv_a, g_pieza_a, desliza_a, d_desliza_a, det_a = calcular_perfil(
     st.session_state.speed_fast_a, st.session_state.speed_slow_a, 
     st.session_state.accel_a, st.session_state.decel_a, 
     st.session_state.conveyor_length, st.session_state.sensor_distance_a,
@@ -161,7 +171,7 @@ t_a, pos_a, vel_a, t_red_a, t_stop_a, overrun_a, g_conv_a, g_pieza_a, desliza_a,
 )
 
 if st.session_state.comparar:
-    t_b, pos_b, vel_b, t_red_b, t_stop_b, overrun_b, g_conv_b, g_pieza_b, desliza_b, d_desliza_b = calcular_perfil(
+    t_b, pos_b, vel_b, t_red_b, t_stop_b, overrun_b, g_conv_b, g_pieza_b, desliza_b, d_desliza_b, det_b = calcular_perfil(
         st.session_state.speed_fast_b, st.session_state.speed_slow_b, 
         st.session_state.accel_b, st.session_state.decel_b, 
         st.session_state.conveyor_length, st.session_state.sensor_distance_b,
@@ -221,6 +231,32 @@ with tab_sim:
     col3.metric("Load Stability", "🔴 SLIPPING" if desliza_a else "🟢 STABLE")
     col4.metric("Relative Part Slip", f"{d_desliza_a:.2f} mm" if desliza_a else "0.00 mm")
 
+    # Dynamic Expander for Live Calculations Breakdown
+    expander_title = "🔍 View Calculation Step-by-Step Breakdown (Profile A)" if desliza_a else "ℹ️ View Stability & Deceleration Math (Profile A)"
+    with st.expander(expander_title):
+        st.markdown("### 🧮 Live Calculation Breakdown (Simulated Values)")
+        
+        st.markdown(f"**Step 1: Effective Stop Ramp Time ($t_{{\\text{{stop\_real}}}}$)**")
+        st.latex(rf"t_{{\text{{stop\_real}}}} = \max({st.session_state.ramp_stop_a:.1f}\,\text{{ms}}, 20.0\,\text{{ms}}) = {det_a['ramp_stop_real_ms']:.1f}\,\text{{ms}} = {det_a['ramp_stop_real_ms']/1000.0:.3f}\,\text{{s}}")
+        
+        st.markdown(f"**Step 2: Conveyor Stop Deceleration ($a_{{\\text{{stop}} rational}}$ & $g_{{\\text{{conv}}}}$)**")
+        st.latex(rf"a_{{\text{{stop}}}} = \frac{{\text{{SPEED\_AUTO\_SLOW A}}}}{{t_{{\text{{stop\_real}}}}}} = \frac{{{st.session_state.speed_slow_a:.1f}\,\text{{mm/s}}}}{{{det_a['ramp_stop_real_ms']/1000.0:.3f}\,\text{{s}}}} = {det_a['a_stop_conveyor']:.2f}\,\text{{mm/s}}^2")
+        st.latex(rf"g_{{\text{{conv}}}} = \frac{{{det_a['a_stop_conveyor']:.2f}\,\text{{mm/s}}^2}}{{9810\,\text{{mm/s}}^2}} = \mathbf{{{g_conv_a:.3f}\,\text{{G}}}}")
+
+        st.markdown(f"**Step 3: Maximum Allowable Friction Acceleration ($a_{{\\text{{max\_piece}}}}$ & $\mu$)**")
+        st.latex(rf"a_{{\text{{max\_piece}}}} = \mu \cdot g = {st.session_state.mu_a:.2f} \cdot 9810\,\text{{mm/s}}^2 = {det_a['a_max_pieza']:.2f}\,\text{{mm/s}}^2 \quad (\mu = \mathbf{{{st.session_state.mu_a:.2f}\,\text{{G}}}})")
+
+        st.markdown(f"**Step 4: Slip Decision Criteria**")
+        if desliza_a:
+            st.error(f"🔴 **SLIP DETECTED:** $g_{{\\text{{conv}}}} ({g_conv_a:.3f}\,\text{{G}}) > \mu ({st.session_state.mu_a:.2f}\,\text{{G}})$. Stopping force exceeds static friction capacity!")
+            
+            st.markdown(f"**Step 5: Relative Slip Distance Calculation ($\Delta d$)**")
+            st.latex(rf"d_{{\text{{piece}}}} = \frac{{v_{{\text{{slow}}}}^2}}{{2 \cdot a_{{\text{{max\_piece}}}}}} = \frac{{{st.session_state.speed_slow_a:.1f}^2}}{{2 \cdot {det_a['a_max_pieza']:.2f}}} = {det_a['dist_freno_pieza']:.2f}\,\text{{mm}}")
+            st.latex(rf"d_{{\text{{conveyor}}}} = \frac{{v_{{\text{{slow}}}}^2}}{{2 \cdot a_{{\text{{stop}}}}}} = \frac{{{st.session_state.speed_slow_a:.1f}^2}}{{2 \cdot {det_a['a_stop_conveyor']:.2f}}} = {det_a['dist_freno_conveyor']:.2f}\,\text{{mm}}")
+            st.latex(rf"\Delta d = d_{{\text{{piece}}}} - d_{{\text{{conveyor}}}} = {det_a['dist_freno_pieza']:.2f}\,\text{{mm}} - {det_a['dist_freno_conveyor']:.2f}\,\text{{mm}} = \mathbf{{{d_desliza_a:.2f}\,\text{{mm}}}}")
+        else:
+            st.success(f"🟢 **STABLE LOAD:** $g_{{\\text{{conv}}}} ({g_conv_a:.3f}\,\text{{G}}) \le \mu ({st.session_state.mu_a:.2f}\,\text{{G}})$. Friction holds the part securely. Relative Part Slip = **0.00 mm**.")
+
     # Metrics Panel: Positioning & Timing
     st.markdown("---")
     st.subheader("🎯 Positioning & Cycle Time (Profile A)")
@@ -256,7 +292,7 @@ with tab_math:
     st.markdown("---")
     st.subheader("1. Mechanical Elasticity Floor")
     st.markdown(
-        "Industrial belt/roller conveyors exhibit mechanical compliance (chain slack, belt stretch, and chassis play). "
+        "Industrial belt/roller conveyors exhibit mechanical compliance (chain slack, belt stretch, and chassis flex). "
         "Even if PLC parameters define a stopping ramp near $0\\text{ ms}$, the physical mechanical response time is lower-bounded by $T_{\\text{min}} = 20.0\\text{ ms}$:"
     )
     st.latex(r"t_{\text{stop\_real}} = \max\left(t_{\text{ramp\_stop}}, 20.0\,\text{ms}\right)")
