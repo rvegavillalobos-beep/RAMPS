@@ -19,11 +19,12 @@ st.title("Kinematic & Physics Conveyor Simulator")
 st.markdown("Real time analysis of velocity profile, positioning, and inertial part slip.")
 
 # ==========================================
-# CONSTANTES FÍSICAS DE LA CARGA (NO CONFIGURABLES)
+# CONSTANTES FÍSICAS DEL CARRIER Y LA CARGA (NO CONFIGURABLES)
 # ==========================================
-CONVEYOR_ALTO_MM = 250.0   # 25 cm - altura estructural del conveyor
-CARGA_ALTO_MM = 130.0      # 13 cm - altura de la carga
-CARGA_LARGO_MM = 1200.0    # 120 cm - largo de la carga
+CARRIER_ALTO_MM = 250.0    # 25 cm - Work Piece Carrier (va sobre las ruedas del conveyor, sin slip)
+CARRIER_LARGO_MM = 1600.0  # 160 cm
+CARGA_ALTO_MM = 130.0      # 13 cm - Pieza (sujeta solo por fricción sobre el carrier)
+CARGA_LARGO_MM = 1200.0    # 120 cm
 
 # ==========================================
 # SESSION STATE INITIALIZATION
@@ -251,7 +252,7 @@ with tab_sim:
     col1.metric("Conveyor Deceleration", f"{g_conv_a:.3f} G")
     col2.metric("Friction Limit (μ)", f"{st.session_state.mu_a:.2f} G")
     col3.metric("Load Stability", "🔴 SLIPPING" if desliza_a else "🟢 STABLE")
-    col4.metric("Relative Part Slip", f"{d_desliza_a:.2f} mm" if desliza_a else "0.00 mm")
+    col4.metric("Relative Part Slip", f"{d_desliza_a:.3f} mm ({d_desliza_a*1000:.0f} µm)" if desliza_a else "0.000 mm")
 
     col_s1, col_s2 = st.columns(2)
     fs = det_a['factor_seguridad']
@@ -259,7 +260,7 @@ with tab_sim:
     col_s1.metric("🛡️ Factor de Seguridad (μ / g_conv)", fs_display,
                   help="Si es menor a 1.0x, la pieza desliza. Mayor a 1.0x = margen de seguridad.")
     col_s2.metric("🎯 μ mínimo requerido para NO deslizar", f"{det_a['mu_minimo_requerido']:.3f}",
-                  help="Coeficiente de fricción mínimo entre pieza y banda necesario para evitar el deslizamiento con esta configuración.")
+                  help="Coeficiente de fricción mínimo entre la pieza y el carrier necesario para evitar el deslizamiento con esta configuración.")
 
     expander_title = "🔍 View Calculation Step by Step Breakdown (Profile A)" if desliza_a else "ℹ️ View Stability & Deceleration Math (Profile A)"
     with st.expander(expander_title):
@@ -292,28 +293,28 @@ with tab_sim:
         if desliza_a:
             st.error(
                 f"🔴 **SLIP DETECTED:** g_conv ({g_conv_a:.3f} G) > μ ({st.session_state.mu_a:.2f} G). "
-                f"Stopping force exceeds static friction capacity!"
+                f"La fuerza de frenado del carrier supera la capacidad de fricción estática de la pieza!"
             )
             st.markdown("**Step 5: Relative Slip Distance Calculation (Δd)**")
             st.latex(L(
                 f"d_{{~text{{piece}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{max~_piece}}}}}} = "
                 f"~frac{{{st.session_state.speed_slow_a:.1f}^2}}{{2 ~cdot {det_a['a_max_pieza']:.2f}}} = "
-                f"{det_a['dist_freno_pieza']:.2f}~,~text{{mm}}"
+                f"{det_a['dist_freno_pieza']:.3f}~,~text{{mm}}"
             ))
             st.latex(L(
                 f"d_{{~text{{conveyor}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{stop}}}}}} = "
                 f"~frac{{{st.session_state.speed_slow_a:.1f}^2}}{{2 ~cdot {det_a['a_stop_conveyor']:.2f}}} = "
-                f"{det_a['dist_freno_conveyor']:.2f}~,~text{{mm}}"
+                f"{det_a['dist_freno_conveyor']:.3f}~,~text{{mm}}"
             ))
             st.latex(L(
                 f"~Delta d = d_{{~text{{piece}}}} - d_{{~text{{conveyor}}}} = "
-                f"{det_a['dist_freno_pieza']:.2f} - {det_a['dist_freno_conveyor']:.2f} = "
-                f"~mathbf{{{d_desliza_a:.2f}~,~text{{mm}}}}"
+                f"{det_a['dist_freno_pieza']:.3f} - {det_a['dist_freno_conveyor']:.3f} = "
+                f"~mathbf{{{d_desliza_a:.3f}~,~text{{mm}}}}"
             ))
         else:
             st.success(
                 f"🟢 **STABLE LOAD:** g_conv ({g_conv_a:.3f} G) ≤ μ ({st.session_state.mu_a:.2f} G). "
-                f"Friction holds the part securely. Relative Part Slip = **0.00 mm**."
+                f"La fricción sostiene la pieza sobre el carrier sin deslizar. Relative Part Slip = **0.000 mm**."
             )
 
     # ---- 3. Positioning & Cycle Time ----
@@ -333,8 +334,8 @@ with tab_sim:
         c_b1, c_b2, c_b3, c_b4 = st.columns(4)
         c_b1.metric("Deceleration Profile B", f"{g_conv_b:.3f} G",
                     delta=f"{(g_conv_b - g_conv_a):.3f} G", delta_color="inverse")
-        c_b2.metric("Part Slip Profile B", f"{d_desliza_b:.2f} mm",
-                    delta=f"{(d_desliza_b - d_desliza_a):.2f} mm", delta_color="inverse")
+        c_b2.metric("Part Slip Profile B", f"{d_desliza_b:.3f} mm",
+                    delta=f"{(d_desliza_b - d_desliza_a):.3f} mm", delta_color="inverse")
         c_b3.metric("Overrun Profile B", f"{overrun_b:.2f} mm",
                     delta=f"{(overrun_b - overrun_a):.2f} mm", delta_color="inverse")
         c_b4.metric("Overrun Time Profile B", f"{overrun_time_b*1000:.0f} ms",
@@ -550,142 +551,179 @@ with tab_sim:
     st.plotly_chart(fig_track, use_container_width=True)
 
     # ==========================================
-    # 6. VISTA FÍSICA DETALLADA: CARGA SOBRE EL CONVEYOR (ZOOM)
+    # 6. WORK PIECE CARRIER + CARGA (viajando juntos, cámara siguiendo)
     # ==========================================
     st.markdown("---")
-    st.subheader("🔬 Vista Física Detallada: Carga sobre el Conveyor (Zoom)")
+    st.subheader("🔬 Work Piece Carrier & Carga: Deslizamiento en Vivo")
     st.caption(
-        f"Zoom automático desde el Sensor de Reducción hasta que la carga se detiene por completo. "
-        f"Conveyor a escala real (largo total = {st.session_state.conveyor_length:.0f} mm). "
-        f"Carga fija: {CARGA_LARGO_MM/10:.0f} cm largo × {CARGA_ALTO_MM/10:.0f} cm alto. "
-        f"La carga se pone en rojo cuando desliza activamente sobre la banda ya detenida."
+        f"El Carrier (160 × 25 cm, gris) va rígidamente sobre las ruedas del conveyor — nunca desliza. "
+        f"La Carga (120 × 13 cm, color) va encima sujeta solo por fricción. Ambos viajan juntos; "
+        f"al frenar bruscamente, la carga puede deslizarse hacia adelante sobre el carrier. "
+        f"La cámara sigue automáticamente el recorrido."
     )
 
-    velocidad_zoom = st.select_slider("Velocidad de reproducción (Zoom)", options=["0.5x", "1x", "2x", "4x"], value="1x", key="vel_zoom")
-    speed_mult_zoom = speed_map[velocidad_zoom]
-    n_frames_zoom = 220
+    col_ctrl1, col_ctrl2 = st.columns(2)
+    with col_ctrl1:
+        velocidad_carrier = st.select_slider("Velocidad de reproducción", options=["0.5x", "1x", "2x", "4x"], value="1x", key="vel_carrier")
+    with col_ctrl2:
+        exageracion_txt = st.select_slider(
+            "Exageración visual del deslizamiento",
+            options=["1x (real)", "5x", "10x", "25x", "50x"], value="10x", key="exag_slip",
+            help="El deslizamiento real entre carrier y carga suele ser de fracciones de milímetro, "
+                 "invisible a escala real. Este control amplifica SOLO el desplazamiento relativo para "
+                 "poder verlo — el valor numérico mostrado siempre es el real, nunca el exagerado."
+        )
+    speed_mult_carrier = speed_map[velocidad_carrier]
+    exag_map = {"1x (real)": 1.0, "5x": 5.0, "10x": 10.0, "25x": 25.0, "50x": 50.0}
+    exageracion = exag_map[exageracion_txt]
+    n_frames_carrier = 240
 
-    def construir_zoom_carga(perfiles, length, n_frames, speed_mult,
-                              conveyor_alto=CONVEYOR_ALTO_MM, carga_alto=CARGA_ALTO_MM, carga_largo=CARGA_LARGO_MM):
+    def construir_carrier_load(perfiles, length, n_frames, speed_mult, exageracion,
+                                carrier_alto=CARRIER_ALTO_MM, carrier_largo=CARRIER_LARGO_MM,
+                                carga_alto=CARGA_ALTO_MM, carga_largo=CARGA_LARGO_MM):
+        margin = (carrier_largo - carga_largo) / 2.0
+
         for p in perfiles:
-            p['a_load'] = p['a_max_pieza'] if p['se_desliza'] else p['a_stop_conveyor']
-            p['t_load_stop'] = p['t_stop'] + (p['v_slow'] / p['a_load'] if p['a_load'] > 0 else 0.0)
-            p['pos_load_final'] = length + p['dist_freno_pieza']
+            if p['se_desliza']:
+                p['t_load_stop'] = p['t_stop'] + (p['v_slow'] / p['a_max_pieza'] if p['a_max_pieza'] > 0 else 0.0)
+            else:
+                p['t_load_stop'] = p['t_full']
 
         t_start = min(p['t_red'] for p in perfiles)
-        t_end = max(max(p['t_load_stop'], p['t_full']) for p in perfiles)
+        t_end = max(max(p['t_full'], p['t_load_stop']) for p in perfiles)
         frame_times = np.linspace(t_start, t_end, n_frames)
 
         for p in perfiles:
-            pos_conv_i = np.interp(frame_times, p['t'], p['pos'])
-            pos_load_i = pos_conv_i.copy()
-            mask = frame_times >= p['t_stop']
-            dt = frame_times[mask] - p['t_stop']
-            t_full_load = p['v_slow'] / p['a_load'] if p['a_load'] > 0 else 0.0
-            seg = length + p['v_slow'] * dt - 0.5 * p['a_load'] * dt ** 2
-            seg = np.where(dt <= t_full_load, seg, p['pos_load_final'])
-            pos_load_i[mask] = seg
-            p['pos_conv_i'] = pos_conv_i
-            p['pos_load_i'] = pos_load_i
+            carrier_pos_i = np.interp(frame_times, p['t'], p['pos'])  # rígido: sigue al conveyor siempre
+            if p['se_desliza']:
+                load_pos_i = carrier_pos_i.copy()
+                mask = frame_times >= p['t_stop']
+                dt = frame_times[mask] - p['t_stop']
+                pos_load_final = length + p['dist_freno_pieza']
+                t_full_load = p['v_slow'] / p['a_max_pieza'] if p['a_max_pieza'] > 0 else 0.0
+                seg = length + p['v_slow'] * dt - 0.5 * p['a_max_pieza'] * dt ** 2
+                seg = np.where(dt <= t_full_load, seg, pos_load_final)
+                load_pos_i[mask] = seg
+            else:
+                load_pos_i = carrier_pos_i.copy()  # se mueve exactamente igual, slip = 0 siempre
+
+            p['carrier_pos_i'] = carrier_pos_i
+            p['load_pos_i'] = load_pos_i
+            p['slip_i'] = np.maximum(load_pos_i - carrier_pos_i, 0.0)
 
         n_lanes = len(perfiles)
-        lane_gap = 160.0
-        lane_height = conveyor_alto + carga_alto + lane_gap
+        lane_gap = 220.0
+        lane_height = carrier_alto + carga_alto + lane_gap
         for idx, p in enumerate(perfiles):
             p['y_off'] = idx * lane_height
 
-        x_min = min(p['pos_sensor_red'] - carga_largo for p in perfiles) - 60.0
-        x_max = max(p['pos_load_final'] for p in perfiles) + 60.0
+        fig_c = go.Figure()
 
-        fig_z = go.Figure()
-
-        fig_z.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="#ff7f0e", dash="dot", width=2), name="Sensor Reducción"))
-        fig_z.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="#d62728", dash="dash", width=2), name="Ziel (Sensor Paro)"))
-        fig_z.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="#333333", dash="dot", width=2), name="Banda Detenida (posición final conveyor)"))
-        fig_z.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color="rgba(220,50,50,0.5)", size=14, symbol='square'), name="Carga Deslizando (slip activo)"))
+        fig_c.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="#ff7f0e", dash="dot", width=2), name="Sensor Reducción"))
+        fig_c.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="#d62728", dash="dash", width=2), name="Ziel (Sensor Paro)"))
+        fig_c.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color="#95a5a6", size=15, symbol='square', line=dict(color='black', width=1)), name="Work Piece Carrier (sin slip)"))
+        fig_c.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color="rgba(220,50,50,0.6)", size=15, symbol='square'), name="Carga deslizando (slip activo)"))
 
         for p in perfiles:
-            y0c, y1c = p['y_off'], p['y_off'] + conveyor_alto
-            fig_z.add_shape(type="rect", x0=0, x1=length, y0=y0c, y1=y1c,
-                             fillcolor="#e9e9e9", line=dict(width=1, color="#cccccc"))
-            fig_z.add_shape(type="line", x0=p['pos_sensor_red'], x1=p['pos_sensor_red'],
-                             y0=y0c - 30, y1=y1c + carga_alto + 30,
+            y0c = p['y_off']
+            fig_c.add_shape(type="line", x0=-10000, x1=length + 10000, y0=y0c, y1=y0c,
+                             line=dict(color="#bbbbbb", width=2))
+            fig_c.add_shape(type="line", x0=p['pos_sensor_red'], x1=p['pos_sensor_red'],
+                             y0=y0c - 40, y1=y0c + carrier_alto + carga_alto + 60,
                              line=dict(color="#ff7f0e", width=2, dash="dot"))
-            fig_z.add_shape(type="line", x0=length, x1=length,
-                             y0=y0c - 30, y1=y1c + carga_alto + 30,
+            fig_c.add_shape(type="line", x0=length, x1=length,
+                             y0=y0c - 40, y1=y0c + carrier_alto + carga_alto + 60,
                              line=dict(color="#d62728", width=2, dash="dash"))
 
-            pos_conv_final = p['pos'][-1]
-            fig_z.add_shape(type="line", x0=pos_conv_final, x1=pos_conv_final,
-                             y0=y0c - 15, y1=y1c + carga_alto + 15,
-                             line=dict(color="#333333", width=2, dash="dot"))
-
-            slip_final = p['dist_freno_pieza'] - (pos_conv_final - length)
             info_txt = (f"<b>{p['label']}</b><br>"
-                        f"v_slow={p['v_slow']:.0f} mm/s<br>"
-                        f"μ={p['mu']:.2f}<br>"
-                        f"Slip final: {slip_final:.1f} mm")
-            fig_z.add_annotation(x=0.0, y=(y0c + y1c) / 2, xref="paper", yref="y", xanchor="left",
-                                  text=info_txt, showarrow=False, align="left",
+                        f"v_slow={p['v_slow']:.0f} mm/s · μ={p['mu']:.2f}<br>"
+                        f"Slip máx real: {p['slip_i'].max():.3f} mm")
+            fig_c.add_annotation(x=0.0, y=y0c + (carrier_alto + carga_alto) / 2, xref="paper", yref="y",
+                                  xanchor="left", text=info_txt, showarrow=False, align="left",
                                   font=dict(size=11, color="#333"), xshift=-18)
 
-        base_traces = len(fig_z.data)
+        base_traces = len(fig_c.data)
         for p in perfiles:
-            x1_0 = p['pos_load_i'][0]
-            x0_0 = x1_0 - carga_largo
-            y0l, y1l = p['y_off'] + conveyor_alto, p['y_off'] + conveyor_alto + carga_alto
-            fig_z.add_trace(go.Scatter(
-                x=[x0_0, x1_0, x1_0, x0_0, x0_0], y=[y0l, y0l, y1l, y1l, y0l],
+            y0c = p['y_off']
+            cf0 = p['carrier_pos_i'][0]
+            lf0 = cf0 - margin + p['slip_i'][0] * exageracion
+            fig_c.add_trace(go.Scatter(
+                x=[cf0 - carrier_largo, cf0, cf0, cf0 - carrier_largo, cf0 - carrier_largo],
+                y=[y0c, y0c, y0c + carrier_alto, y0c + carrier_alto, y0c],
+                mode='lines', fill='toself', fillcolor="#95a5a6",
+                line=dict(color='black', width=2), showlegend=False, hoverinfo='skip'
+            ))
+            fig_c.add_trace(go.Scatter(
+                x=[lf0 - carga_largo, lf0, lf0, lf0 - carga_largo, lf0 - carga_largo],
+                y=[y0c + carrier_alto, y0c + carrier_alto, y0c + carrier_alto + carga_alto,
+                   y0c + carrier_alto + carga_alto, y0c + carrier_alto],
                 mode='lines', fill='toself', fillcolor=p['color'],
-                line=dict(color='black', width=2), opacity=0.85, showlegend=False, hoverinfo='skip'
+                line=dict(color='black', width=2), showlegend=False, hoverinfo='skip'
             ))
-            fig_z.add_trace(go.Scatter(
-                x=[(x0_0 + x1_0) / 2], y=[y1l + 25], mode='text', text=["..."],
-                textfont=dict(size=11, color="#333"), showlegend=False, hoverinfo='skip'
-            ))
+            fig_c.add_trace(go.Scatter(x=[cf0], y=[y0c + carrier_alto + carga_alto + 35], mode='text',
+                                        text=["..."], textfont=dict(size=11, color="#333"),
+                                        showlegend=False, hoverinfo='skip'))
 
         frames = []
+        camera_half_width = max(carrier_largo * 1.5, carga_largo * 1.8)
         for k, ft in enumerate(frame_times):
-            data_k = []
-            idx_k = []
+            data_k, idx_k = [], []
+            all_centers = []
             for pi, p in enumerate(perfiles):
-                fi = base_traces + pi * 2
-                x1_k = p['pos_load_i'][k]
-                x0_k = x1_k - carga_largo
-                y0l, y1l = p['y_off'] + conveyor_alto, p['y_off'] + conveyor_alto + carga_alto
-                slip_now = max(p['pos_load_i'][k] - p['pos_conv_i'][k], 0.0)
-                is_slip_now = ft >= p['t_stop'] and slip_now > 0.5
-                color_now = "#e74c3c" if is_slip_now else p['color']
+                y0c = p['y_off']
+                cf = p['carrier_pos_i'][k]
+                slip_now = p['slip_i'][k]
+                lf = cf - margin + slip_now * exageracion
+                is_slip_now = ft >= p['t_stop'] and slip_now > 1e-6
+                load_color = "#e74c3c" if is_slip_now else p['color']
+                all_centers.append(cf)
 
-                data_k.append(go.Scatter(x=[x0_k, x1_k, x1_k, x0_k, x0_k], y=[y0l, y0l, y1l, y1l, y0l],
-                                          fillcolor=color_now, line=dict(color='black', width=2)))
+                fi = base_traces + pi * 3
+                data_k.append(go.Scatter(
+                    x=[cf - carrier_largo, cf, cf, cf - carrier_largo, cf - carrier_largo],
+                    y=[y0c, y0c, y0c + carrier_alto, y0c + carrier_alto, y0c]
+                ))
                 idx_k.append(fi)
-
-                txt = f"{x1_k:.0f} mm"
-                if is_slip_now:
-                    txt += f" ⚠️ deslizando +{slip_now:.1f} mm"
-                data_k.append(go.Scatter(x=[(x0_k + x1_k) / 2], y=[y1l + 25], text=[txt],
-                                          textfont=dict(color=color_now)))
+                data_k.append(go.Scatter(
+                    x=[lf - carga_largo, lf, lf, lf - carga_largo, lf - carga_largo],
+                    y=[y0c + carrier_alto, y0c + carrier_alto, y0c + carrier_alto + carga_alto,
+                       y0c + carrier_alto + carga_alto, y0c + carrier_alto],
+                    fillcolor=load_color
+                ))
                 idx_k.append(fi + 1)
 
-            frames.append(go.Frame(data=data_k, traces=idx_k, name=str(k)))
+                exag_note = f" (mostrado a {exageracion:.0f}x)" if exageracion > 1 and slip_now > 0 else ""
+                txt = f"Carrier: {cf:.0f} mm | Slip real: {slip_now:.3f} mm ({slip_now*1000:.0f} µm){exag_note}"
+                if is_slip_now:
+                    txt = "⚠️ DESLIZANDO — " + txt
+                data_k.append(go.Scatter(x=[cf], y=[y0c + carrier_alto + carga_alto + 35],
+                                          text=[txt], textfont=dict(color="#e74c3c" if is_slip_now else "#333")))
+                idx_k.append(fi + 2)
 
-        fig_z.frames = frames
-        target_total_ms = float(np.clip((t_end - t_start) * 1000.0, 3000.0, 12000.0))
+            center = float(np.mean(all_centers))
+            frames.append(go.Frame(
+                data=data_k, traces=idx_k, name=str(k),
+                layout=go.Layout(xaxis=dict(range=[center - camera_half_width, center + camera_half_width]))
+            ))
+
+        fig_c.frames = frames
+        target_total_ms = float(np.clip((t_end - t_start) * 1000.0, 4000.0, 14000.0))
         frame_ms = max((target_total_ms / n_frames) / speed_mult, 8.0)
 
-        fig_z.update_layout(
-            height=180 + n_lanes * (conveyor_alto / 2 + carga_alto + 220),
+        c0 = float(np.mean([p['carrier_pos_i'][0] for p in perfiles]))
+        fig_c.update_layout(
+            height=180 + n_lanes * (carrier_alto / 2 + carga_alto + 240),
             template="plotly_white",
-            xaxis=dict(title="Posición (mm)", range=[x_min, x_max]),
-            yaxis=dict(visible=False, range=[-40, n_lanes * lane_height + 40]),
+            xaxis=dict(title="Posición (mm) — cámara siguiendo al conjunto",
+                       range=[c0 - camera_half_width, c0 + camera_half_width]),
+            yaxis=dict(visible=False, range=[-60, n_lanes * lane_height + 60]),
             margin=dict(l=200, t=70, b=60, r=40),
             legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center", font=dict(size=10)),
             updatemenus=[dict(
                 type="buttons", showactive=False, y=1.15, x=0.0, xanchor="left",
                 buttons=[
                     dict(label="▶ Play", method="animate",
-                         args=[None, dict(frame=dict(duration=frame_ms, redraw=False),
+                         args=[None, dict(frame=dict(duration=frame_ms, redraw=True),
                                            fromcurrent=True, transition=dict(duration=0), mode="immediate")]),
                     dict(label="⏸ Pause", method="animate",
                          args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])
@@ -693,35 +731,36 @@ with tab_sim:
             )],
             sliders=[dict(
                 steps=[dict(method="animate", args=[[str(k)],
-                            dict(mode="immediate", frame=dict(duration=0, redraw=False))],
+                            dict(mode="immediate", frame=dict(duration=0, redraw=True))],
                             label=f"{frame_times[k]:.2f}s") for k in range(n_frames)],
-                x=0.0, len=0.96, y=-0.28
+                x=0.0, len=0.96, y=-0.30
             )]
         )
-        return fig_z
+        return fig_c
 
-    perfiles_zoom = [{
+    perfiles_carrier = [{
         "label": "Perfil A", "color": "#1f77b4",
         "t": t_a, "pos": pos_a,
         "v_slow": st.session_state.speed_slow_a, "mu": st.session_state.mu_a,
-        "a_stop_conveyor": det_a['a_stop_conveyor'], "a_max_pieza": det_a['a_max_pieza'],
+        "a_max_pieza": det_a['a_max_pieza'],
         "se_desliza": desliza_a, "dist_freno_pieza": det_a['dist_freno_pieza'],
         "t_stop": t_stop_a, "t_red": t_red_a, "pos_sensor_red": det_a['pos_sensor_red'],
         "t_full": det_a['t_fully_stopped'],
     }]
     if st.session_state.comparar:
-        perfiles_zoom.append({
+        perfiles_carrier.append({
             "label": "Perfil B", "color": "#d62728",
             "t": t_b, "pos": pos_b,
             "v_slow": st.session_state.speed_slow_b, "mu": st.session_state.mu_b,
-            "a_stop_conveyor": det_b['a_stop_conveyor'], "a_max_pieza": det_b['a_max_pieza'],
+            "a_max_pieza": det_b['a_max_pieza'],
             "se_desliza": desliza_b, "dist_freno_pieza": det_b['dist_freno_pieza'],
             "t_stop": t_stop_b, "t_red": t_red_b, "pos_sensor_red": det_b['pos_sensor_red'],
             "t_full": det_b['t_fully_stopped'],
         })
 
-    fig_zoom = construir_zoom_carga(perfiles_zoom, st.session_state.conveyor_length, n_frames_zoom, speed_mult_zoom)
-    st.plotly_chart(fig_zoom, use_container_width=True)
+    fig_carrier = construir_carrier_load(perfiles_carrier, st.session_state.conveyor_length,
+                                          n_frames_carrier, speed_mult_carrier, exageracion)
+    st.plotly_chart(fig_carrier, use_container_width=True)
 
 
 # ==========================================
@@ -778,15 +817,27 @@ with tab_math:
     )
     st.latex(L(r"~mu_{~text{minimo requerido}} = g_{~text{conv}}"))
 
-    st.subheader("6. Load Trajectory During Slip (Zoom View)")
+    st.subheader("6. Carrier vs. Load: Two-Body Slip Model")
     st.markdown(L(
-        "During the DECEL_TO_STOP phase, the conveyor belt and the transported load decelerate independently. "
-        "Let $a_{~text{load}}$ be the effective deceleration governing the load: equal to $a_{~text{max~_piece}}$ if slip is active, "
-        "or equal to $a_{~text{stop}}$ otherwise (moving in lockstep with the belt):"
+        "The simulation models **two rigid bodies traveling together**:\\n\\n"
+        "* **Work Piece Carrier**: mechanically coupled to the conveyor rollers/wheels — it always follows the belt's "
+        "exact kinematic profile, including the final stop deceleration $a_{~text{stop}}$. It never slips relative to the conveyor.\\n"
+        "* **Load**: rests on top of the carrier, held in place **only by dry friction**. It moves in lockstep with the "
+        "carrier during ACCEL_FAST, CRUISE_FAST, DECEL_TO_SLOW and CRUISE_SLOW. Only during DECEL_TO_STOP, if "
+        "$g_{~text{conv}} > ~mu$, the load cannot keep up and slides forward relative to the carrier."
     ))
-    st.latex(L(r"v_{~text{load}}(t) = ~max~left(v_{~text{slow}} - a_{~text{load}} ~cdot (t - t_{~text{stop}}),~ 0~right)"))
-    st.latex(L(r"x_{~text{load}}(t) = L_{~text{total}} + v_{~text{slow}} ~cdot (t-t_{~text{stop}}) - ~frac{1}{2} a_{~text{load}} (t-t_{~text{stop}})^2"))
-    st.markdown("This trajectory is what powers the zoomed physical animation showing the load sliding forward over the already-stopped belt.")
+    st.latex(L(r"x_{~text{carrier}}(t) = x_{~text{conveyor}}(t) ~quad ~text{(rigid coupling, no slip, always)}"))
+    st.latex(L(
+        r"x_{~text{load}}(t) = ~begin{cases} x_{~text{carrier}}(t) & t < t_{~text{stop}} ~text{ or no slip} \\\\ "
+        r"L_{~text{total}} + v_{~text{slow}}(t-t_{~text{stop}}) - ~frac{1}{2}a_{~text{max~_piece}}(t-t_{~text{stop}})^2 & "
+        r"t ~ge t_{~text{stop}} ~text{ and slip active} ~end{cases}"
+    ))
+    st.latex(L(r"~text{Slip}(t) = x_{~text{load}}(t) - x_{~text{carrier}}(t) ~ge 0"))
+    st.markdown(
+        "En condiciones típicas (μ≈0.28, velocidades de creep bajas), este deslizamiento resulta del orden de "
+        "**fracciones de milímetro a pocos milímetros** — imperceptible a escala real, por lo que la animación "
+        "incluye un factor de exageración visual aplicado únicamente al desplazamiento relativo (nunca a la posición absoluta)."
+    )
 
     st.subheader("7. Integration Engine & Kinematic Profiles")
     st.markdown(L(
