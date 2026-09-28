@@ -340,11 +340,12 @@ with tab_sim:
                     delta=f"{(t_b[-1] - t_a[-1]):.2f} s", delta_color="inverse")
 
     # ==========================================
-    # 5. ANIMACIÓN — Calidad siempre ALTA
+    # 5. ANIMACIÓN — Calidad siempre ALTA + control de velocidad corregido
     # ==========================================
     st.markdown("---")
     st.subheader("🎬 Animación en Tiempo Real: Recorrido de la Pieza")
-    st.caption("El riel se colorea conforme la pieza avanza. El color y la etiqueta cambian según la fase cinemática activa. Calidad fijada en Alta (260 frames) para máxima fidelidad.")
+    st.caption("El riel se colorea conforme la pieza avanza. Calidad fijada en Alta (260 frames). "
+               "El control de velocidad ahora sí modifica el ritmo de reproducción (se corrigió un problema de redibujado pesado en Plotly).")
 
     velocidad_reproduccion = st.select_slider("Velocidad de reproducción", options=["0.5x", "1x", "2x", "4x"], value="1x")
     speed_map = {"0.5x": 0.5, "1x": 1.0, "2x": 2.0, "4x": 4.0}
@@ -476,8 +477,13 @@ with tab_sim:
             frames.append(go.Frame(data=data_k, traces=idx_k, name=str(k)))
 
         fig_t.frames = frames
-        base_ms = (1000 * (frame_times[1] - frame_times[0])) if n_frames > 1 else 50
-        frame_ms = max(base_ms / speed_mult, 15)
+
+        # ---- CÁLCULO DE VELOCIDAD DE REPRODUCCIÓN (CORREGIDO) ----
+        # Se acota la duración total de reproducción entre 4s y 16s (independiente
+        # del tiempo de ciclo real, que puede ser muy corto o muy largo) para que
+        # el multiplicador de velocidad tenga un efecto siempre perceptible.
+        target_total_ms = float(np.clip(t_end * 1000.0, 4000.0, 16000.0))
+        frame_ms = max((target_total_ms / n_frames) / speed_mult, 8.0)
 
         fig_t.update_layout(
             height=200 + n_lanes * 190,
@@ -490,15 +496,15 @@ with tab_sim:
                 type="buttons", showactive=False, y=1.22, x=0.0, xanchor="left",
                 buttons=[
                     dict(label="▶ Play", method="animate",
-                         args=[None, dict(frame=dict(duration=frame_ms, redraw=True),
-                                           fromcurrent=True, transition=dict(duration=0))]),
+                         args=[None, dict(frame=dict(duration=frame_ms, redraw=False),
+                                           fromcurrent=True, transition=dict(duration=0), mode="immediate")]),
                     dict(label="⏸ Pause", method="animate",
                          args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])
                 ]
             )],
             sliders=[dict(
                 steps=[dict(method="animate", args=[[str(k)],
-                            dict(mode="immediate", frame=dict(duration=0, redraw=True))],
+                            dict(mode="immediate", frame=dict(duration=0, redraw=False))],
                             label=f"{frame_times[k]:.1f}s") for k in range(n_frames)],
                 x=0.0, len=0.96, y=-0.32
             )]
