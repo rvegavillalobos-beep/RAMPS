@@ -5,10 +5,6 @@ import plotly.graph_objects as go
 # ==========================================
 # BACKSLASH-SAFE LATEX HELPER
 # ==========================================
-# Algunas canalizaciones de texto/chat eliminan backslashes sueltos al
-# transmitir código. Para garantizar que las fórmulas LaTeX se rendericen
-# correctamente, construimos el backslash con chr(92) y usamos '~' como
-# marcador de posición dentro de las plantillas LaTeX.
 BS = chr(92)
 
 def L(template: str) -> str:
@@ -210,7 +206,7 @@ tab_sim, tab_math = st.tabs(["📊 Simulation & Dashboard", "📚 Mathematical B
 # ==========================================
 with tab_sim:
 
-    # ---- 1. GRÁFICA DE VELOCIDAD (sensores siempre visibles y dinámicos) ----
+    # ---- 1. GRÁFICA DE VELOCIDAD ----
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=t_a, y=vel_a, mode='lines', name='Velocity Profile A',
                               line=dict(color='#1f77b4', width=3)))
@@ -218,9 +214,6 @@ with tab_sim:
         fig.add_trace(go.Scatter(x=t_b, y=vel_b, mode='lines', name='Velocity Profile B',
                                   line=dict(color='#9467bd', width=3, dash='dashdot')))
 
-    # add_vline garantiza que la línea siempre atraviese el 100% de la altura
-    # del gráfico (coordenadas de "paper"), sin importar cómo cambie la escala
-    # de velocidad, y la etiqueta muestra el tiempo exacto recalculado.
     fig.add_vline(x=t_red_a, line_width=2, line_dash="dot", line_color="#ff7f0e",
                   annotation_text=f"Sensor Reducción A · {t_red_a:.2f}s",
                   annotation_position="top left", annotation_font_size=10, annotation_font_color="#ff7f0e")
@@ -267,7 +260,7 @@ with tab_sim:
 
         st.markdown("**Step 1: Effective Stop Ramp Time**")
         st.latex(L(
-            f"t_{{~text{{stop_real}}}} = ~max({st.session_state.ramp_stop_a:.1f}~,~text{{ms}}, "
+            f"t_{{~text{{stop~_real}}}} = ~max({st.session_state.ramp_stop_a:.1f}~,~text{{ms}}, "
             f"20.0~,~text{{ms}}) = {det_a['ramp_stop_real_ms']:.1f}~,~text{{ms}} = "
             f"{det_a['ramp_stop_real_ms']/1000.0:.3f}~,~text{{s}}"
         ))
@@ -284,7 +277,7 @@ with tab_sim:
 
         st.markdown("**Step 3: Maximum Allowable Friction Acceleration**")
         st.latex(L(
-            f"a_{{~text{{max_piece}}}} = ~mu ~cdot g = {st.session_state.mu_a:.2f} ~cdot 9810~,~text{{mm/s}}^2 "
+            f"a_{{~text{{max~_piece}}}} = ~mu ~cdot g = {st.session_state.mu_a:.2f} ~cdot 9810~,~text{{mm/s}}^2 "
             f"= {det_a['a_max_pieza']:.2f}~,~text{{mm/s}}^2 ~quad (~mu = ~mathbf{{{st.session_state.mu_a:.2f}~,~text{{G}}}})"
         ))
 
@@ -296,7 +289,7 @@ with tab_sim:
             )
             st.markdown("**Step 5: Relative Slip Distance Calculation (Δd)**")
             st.latex(L(
-                f"d_{{~text{{piece}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{max_piece}}}}}} = "
+                f"d_{{~text{{piece}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{max~_piece}}}}}} = "
                 f"~frac{{{st.session_state.speed_slow_a:.1f}^2}}{{2 ~cdot {det_a['a_max_pieza']:.2f}}} = "
                 f"{det_a['dist_freno_pieza']:.2f}~,~text{{mm}}"
             ))
@@ -566,19 +559,19 @@ with tab_math:
         "Even if PLC parameters define a stopping ramp near $0~text{ ms}$, the physical mechanical response time "
         "is lower bounded by $T_{~text{min}} = 20.0~,~text{ms}$:"
     ))
-    st.latex(L(r"t_{~text{stop_real}} = ~max~left(t_{~text{ramp_stop}}, 20.0~,~text{ms}~right)"))
+    st.latex(L(r"t_{~text{stop~_real}} = ~max~left(t_{~text{ramp~_stop}}, 20.0~,~text{ms}~right)"))
 
     st.subheader("2. Conveyor Stop Deceleration")
     st.markdown(L("When the part trips the stop sensor at creep velocity $v_{~text{slow}}$, the conveyor applies a stopping deceleration $a_{~text{stop}}$:"))
-    st.latex(L(r"a_{~text{stop}} = ~frac{v_{~text{slow}}}{t_{~text{stop_real}}}"))
+    st.latex(L(r"a_{~text{stop}} = ~frac{v_{~text{slow}}}{t_{~text{stop~_real}}}"))
     st.markdown(L("Expressed in dimensionless $G$ forces relative to $g = 9810~,~text{mm/s}^2$:"))
     st.latex(L(r"g_{~text{conv}} = ~frac{a_{~text{stop}}}{9810}"))
 
     st.subheader("3. Static Friction Threshold & Slip Determination")
     st.markdown(L("According to Coulomb's Law of Dry Friction, the maximum shear force transmitted without slipping is governed by the static friction coefficient $~mu$:"))
-    st.latex(L(r"F_{~text{friction_max}} = ~mu ~cdot m ~cdot g"))
-    st.latex(L(r"a_{~text{max_piece}} = ~mu ~cdot g = ~mu ~cdot 9810~,~text{mm/s}^2"))
-    st.latex(L(r"g_{~text{max_piece}} = ~mu"))
+    st.latex(L(r"F_{~text{friction~_max}} = ~mu ~cdot m ~cdot g"))
+    st.latex(L(r"a_{~text{max~_piece}} = ~mu ~cdot g = ~mu ~cdot 9810~,~text{mm/s}^2"))
+    st.latex(L(r"g_{~text{max~_piece}} = ~mu"))
     st.markdown(L(
         "**Slip Condition Criterion:**\\n"
         "* If $g_{~text{conv}} ~le ~mu$: the static friction force holds the part in place. **No slip occurs** ($~Delta d = 0$).\\n"
@@ -586,9 +579,9 @@ with tab_math:
     ))
 
     st.subheader("4. Relative Part Slip Estimation")
-    st.markdown(L("When slip occurs, the conveyor decelerates at $a_{~text{stop}}$, while the part decelerates at a slower rate dictated solely by dynamic friction $a_{~text{max_piece}}$."))
+    st.markdown(L("When slip occurs, the conveyor decelerates at $a_{~text{stop}}$, while the part decelerates at a slower rate dictated solely by dynamic friction $a_{~text{max~_piece}}$."))
     st.markdown("Stopping distance of the part under friction:")
-    st.latex(L(r"d_{~text{piece}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{max_piece}}}"))
+    st.latex(L(r"d_{~text{piece}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{max~_piece}}}"))
     st.markdown("Stopping distance of the physical conveyor belt:")
     st.latex(L(r"d_{~text{conveyor}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{stop}}}"))
     st.markdown(L("Net relative slippage displacement ($~Delta d$):"))
@@ -611,5 +604,5 @@ with tab_math:
         "2. **CRUISE_FAST**: Maintains fast cruise speed until reaching $P_{~text{reduction}} = L_{~text{total}} - S_{~text{distance}}$.\\n"
         "3. **DECEL_TO_SLOW**: Decelerates at RAMP_DECEL down to SPEED_AUTO_SLOW.\\n"
         "4. **CRUISE_SLOW**: Creeps at slow speed until reaching $P_{~text{stop}} = L_{~text{total}}$.\\n"
-        "5. **DECEL_TO_STOP**: Final stop deceleration based on $t_{~text{stop_real}}$."
+        "5. **DECEL_TO_STOP**: Final stop deceleration based on $t_{~text{stop~_real}}$."
     ))
