@@ -551,15 +551,14 @@ with tab_sim:
     st.plotly_chart(fig_track, use_container_width=True)
 
     # ==========================================
-    # 6. WORK PIECE CARRIER + CARGA (viajando juntos, cámara siguiendo)
+    # 6. WORK PIECE CARRIER + CARGA (EJE FIJO — SIN CÁMARA MÓVIL)
     # ==========================================
     st.markdown("---")
     st.subheader("🔬 Work Piece Carrier & Carga: Deslizamiento en Vivo")
     st.caption(
         f"El Carrier (160 × 25 cm, gris) va rígidamente sobre las ruedas del conveyor — nunca desliza. "
-        f"La Carga (120 × 13 cm, color) va encima sujeta solo por fricción. Ambos viajan juntos; "
-        f"al frenar bruscamente, la carga puede deslizarse hacia adelante sobre el carrier. "
-        f"La cámara sigue automáticamente el recorrido."
+        f"La Carga (120 × 13 cm, color) va encima sujeta solo por fricción. Ambos viajan juntos. "
+        f"El eje, el grid y las líneas de sensores son fijos: el único elemento que se mueve es el conjunto Carrier + Carga."
     )
 
     col_ctrl1, col_ctrl2 = st.columns(2)
@@ -610,12 +609,21 @@ with tab_sim:
             p['carrier_pos_i'] = carrier_pos_i
             p['load_pos_i'] = load_pos_i
             p['slip_i'] = np.maximum(load_pos_i - carrier_pos_i, 0.0)
+            # Posición del borde delantero visual de la carga, con exageración aplicada SOLO al slip relativo
+            p['lf_i'] = carrier_pos_i - margin + p['slip_i'] * exageracion
 
         n_lanes = len(perfiles)
         lane_gap = 220.0
         lane_height = carrier_alto + carga_alto + lane_gap
         for idx, p in enumerate(perfiles):
             p['y_off'] = idx * lane_height
+
+        # ---- RANGO DE EJE FIJO (calculado una sola vez, nunca cambia entre frames) ----
+        left_bound = min(float(np.min(p['carrier_pos_i'])) - carrier_largo for p in perfiles)
+        right_bound = max(float(np.max(p['lf_i'])) for p in perfiles)
+        pad = max((right_bound - left_bound) * 0.05, 80.0)
+        x_min_fixed = left_bound - pad
+        x_max_fixed = right_bound + pad
 
         fig_c = go.Figure()
 
@@ -626,7 +634,8 @@ with tab_sim:
 
         for p in perfiles:
             y0c = p['y_off']
-            fig_c.add_shape(type="line", x0=-10000, x1=length + 10000, y0=y0c, y1=y0c,
+            # Riel estático (no se mueve, solo referencia visual de fondo)
+            fig_c.add_shape(type="line", x0=x_min_fixed, x1=x_max_fixed, y0=y0c, y1=y0c,
                              line=dict(color="#bbbbbb", width=2))
             fig_c.add_shape(type="line", x0=p['pos_sensor_red'], x1=p['pos_sensor_red'],
                              y0=y0c - 40, y1=y0c + carrier_alto + carga_alto + 60,
@@ -646,7 +655,7 @@ with tab_sim:
         for p in perfiles:
             y0c = p['y_off']
             cf0 = p['carrier_pos_i'][0]
-            lf0 = cf0 - margin + p['slip_i'][0] * exageracion
+            lf0 = p['lf_i'][0]
             fig_c.add_trace(go.Scatter(
                 x=[cf0 - carrier_largo, cf0, cf0, cf0 - carrier_largo, cf0 - carrier_largo],
                 y=[y0c, y0c, y0c + carrier_alto, y0c + carrier_alto, y0c],
@@ -665,18 +674,15 @@ with tab_sim:
                                         showlegend=False, hoverinfo='skip'))
 
         frames = []
-        camera_half_width = max(carrier_largo * 1.5, carga_largo * 1.8)
         for k, ft in enumerate(frame_times):
             data_k, idx_k = [], []
-            all_centers = []
             for pi, p in enumerate(perfiles):
                 y0c = p['y_off']
                 cf = p['carrier_pos_i'][k]
+                lf = p['lf_i'][k]
                 slip_now = p['slip_i'][k]
-                lf = cf - margin + slip_now * exageracion
                 is_slip_now = ft >= p['t_stop'] and slip_now > 1e-6
                 load_color = "#e74c3c" if is_slip_now else p['color']
-                all_centers.append(cf)
 
                 fi = base_traces + pi * 3
                 data_k.append(go.Scatter(
@@ -700,22 +706,18 @@ with tab_sim:
                                           text=[txt], textfont=dict(color="#e74c3c" if is_slip_now else "#333")))
                 idx_k.append(fi + 2)
 
-            center = float(np.mean(all_centers))
-            frames.append(go.Frame(
-                data=data_k, traces=idx_k, name=str(k),
-                layout=go.Layout(xaxis=dict(range=[center - camera_half_width, center + camera_half_width]))
-            ))
+            # NOTA: no se actualiza 'layout' en ningún frame -> el eje, el grid y los
+            # sensores permanecen absolutamente estáticos en todo momento.
+            frames.append(go.Frame(data=data_k, traces=idx_k, name=str(k)))
 
         fig_c.frames = frames
         target_total_ms = float(np.clip((t_end - t_start) * 1000.0, 4000.0, 14000.0))
         frame_ms = max((target_total_ms / n_frames) / speed_mult, 8.0)
 
-        c0 = float(np.mean([p['carrier_pos_i'][0] for p in perfiles]))
         fig_c.update_layout(
             height=180 + n_lanes * (carrier_alto / 2 + carga_alto + 240),
             template="plotly_white",
-            xaxis=dict(title="Posición (mm) — cámara siguiendo al conjunto",
-                       range=[c0 - camera_half_width, c0 + camera_half_width]),
+            xaxis=dict(title="Posición (mm) — eje fijo", range=[x_min_fixed, x_max_fixed]),
             yaxis=dict(visible=False, range=[-60, n_lanes * lane_height + 60]),
             margin=dict(l=200, t=70, b=60, r=40),
             legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center", font=dict(size=10)),
@@ -723,7 +725,7 @@ with tab_sim:
                 type="buttons", showactive=False, y=1.15, x=0.0, xanchor="left",
                 buttons=[
                     dict(label="▶ Play", method="animate",
-                         args=[None, dict(frame=dict(duration=frame_ms, redraw=True),
+                         args=[None, dict(frame=dict(duration=frame_ms, redraw=False),
                                            fromcurrent=True, transition=dict(duration=0), mode="immediate")]),
                     dict(label="⏸ Pause", method="animate",
                          args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])
@@ -731,7 +733,7 @@ with tab_sim:
             )],
             sliders=[dict(
                 steps=[dict(method="animate", args=[[str(k)],
-                            dict(mode="immediate", frame=dict(duration=0, redraw=True))],
+                            dict(mode="immediate", frame=dict(duration=0, redraw=False))],
                             label=f"{frame_times[k]:.2f}s") for k in range(n_frames)],
                 x=0.0, len=0.96, y=-0.30
             )]
@@ -836,7 +838,10 @@ with tab_math:
     st.markdown(
         "En condiciones típicas (μ≈0.28, velocidades de creep bajas), este deslizamiento resulta del orden de "
         "**fracciones de milímetro a pocos milímetros** — imperceptible a escala real, por lo que la animación "
-        "incluye un factor de exageración visual aplicado únicamente al desplazamiento relativo (nunca a la posición absoluta)."
+        "incluye un factor de exageración visual aplicado únicamente al desplazamiento relativo (nunca a la posición absoluta). "
+        "El eje de la gráfica, el grid y las líneas de sensores se calculan una sola vez con un rango fijo que "
+        "contiene todo el recorrido posible del conjunto, garantizando que **el único elemento que se mueve en pantalla "
+        "sea el Carrier y la Carga**."
     )
 
     st.subheader("7. Integration Engine & Kinematic Profiles")
