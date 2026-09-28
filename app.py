@@ -113,8 +113,29 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
     g_max_pieza = mu
     a_max_pieza = mu * 9810.0
 
+    # ---- VALIDACIÓN DE CONFIGURACIÓN: distancia de sensor vs rampa de decel ----
+    # Distancia física mínima necesaria para bajar de v_fast a v_slow con la
+    # rampa RAMP_DECEL configurada. Si la Distancia Sensor Reducción es menor
+    # a esto, el sistema llegará al sensor de paro SIN haber alcanzado v_slow.
+    if v_fast > v_slow and decel > 0:
+        dist_needed_decel = (v_fast ** 2 - v_slow ** 2) / (2.0 * decel)
+    else:
+        dist_needed_decel = 0.0
+    insufficient_distance = dist_needed_decel > s_dist
+
     for i in range(1, steps):
         t[i] = t[i - 1] + dt
+
+        # ---- CHEQUEO UNIVERSAL DEL SENSOR DE PARO (FIX) ----
+        # El sensor de paro es un evento físico de POSICIÓN: se activa apenas
+        # la posición alcanza pos_stop, sin importar en qué estado cinemático
+        # se encuentre el sistema (incluso si todavía está en DECEL_TO_SLOW
+        # porque la distancia del sensor de reducción fue insuficiente).
+        # Antes este chequeo SOLO se hacía dentro de CRUISE_SLOW, lo cual
+        # causaba que RAMP_DECEL contaminara incorrectamente el overrun.
+        if state not in ("DECEL_TO_STOP", "DONE") and p >= pos_stop:
+            t_sensor_stop = t[i]
+            state = "DECEL_TO_STOP"
 
         if state == "ACCEL_FAST":
             v += accel * dt
@@ -133,9 +154,7 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
                 t_reach_slow = t[i]
                 state = "CRUISE_SLOW"
         elif state == "CRUISE_SLOW":
-            if p >= pos_stop:
-                t_sensor_stop = t[i]
-                state = "DECEL_TO_STOP"
+            pass  # el único evento relevante aquí (llegar a pos_stop) ya se cubrió arriba
         elif state == "DECEL_TO_STOP":
             v -= a_stop_conveyor * dt
             if v <= 0:
@@ -154,6 +173,12 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
             pos = pos[:i + 1]
             vel = vel[:i + 1]
             break
+
+    # Si nunca se llegó a v_slow (por distancia insuficiente), t_reach_slow
+    # queda en 0.0; lo igualamos a t_sensor_stop para que la clasificación de
+    # fases en las animaciones no confunda ese tramo con CRUISE_SLOW.
+    if t_reach_slow == 0.0 and t_sensor_stop > 0.0:
+        t_reach_slow = t_sensor_stop
 
     dist_overrun_conveyor = pos[-1] - pos_stop
     overrun_time = max(t_fully_stopped - t_sensor_stop, 0.0)
@@ -186,6 +211,8 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
         "mu_minimo_requerido": mu_minimo_requerido,
         "pos_sensor_red": pos_sensor_red,
         "pos_stop": pos_stop,
+        "insufficient_distance": insufficient_distance,
+        "dist_needed_decel": dist_needed_decel,
     }
 
     return (t, pos, vel, t_sensor_red, t_sensor_stop, dist_overrun_conveyor, overrun_time,
@@ -213,6 +240,24 @@ tab_sim, tab_math = st.tabs(["📊 Simulation & Dashboard", "📚 Mathematical B
 # TAB 1: SIMULATION & DASHBOARD
 # ==========================================
 with tab_sim:
+
+    # ---- AVISO DE CONFIGURACIÓN: distancia de sensor insuficiente ----
+    if det_a['insufficient_distance']:
+        st.warning(
+            f"⚠️ **Perfil A — Configuración inconsistente:** la rampa `RAMP_DECEL A` necesita "
+            f"**{det_a['dist_needed_decel']:.1f} mm** para bajar de SPEED_AUTO_FAST a SPEED_AUTO_SLOW, "
+            f"pero la `Distancia Sensor Reducción A` solo tiene **{st.session_state.sensor_distance_a:.1f} mm**. "
+            f"La pieza llegará al sensor de paro sin haber alcanzado la velocidad de creep, causando un overrun "
+            f"mayor al esperado. Aumenta la distancia del sensor o reduce RAMP_DECEL / SPEED_AUTO_FAST."
+        )
+    if st.session_state.comparar and det_b['insufficient_distance']:
+        st.warning(
+            f"⚠️ **Perfil B — Configuración inconsistente:** la rampa `RAMP_DECEL B` necesita "
+            f"**{det_b['dist_needed_decel']:.1f} mm** para bajar de SPEED_AUTO_FAST a SPEED_AUTO_SLOW, "
+            f"pero la `Distancia Sensor Reducción B` solo tiene **{st.session_state.sensor_distance_b:.1f} mm**. "
+            f"La pieza llegará al sensor de paro sin haber alcanzado la velocidad de creep, causando un overrun "
+            f"mayor al esperado. Aumenta la distancia del sensor o reduce RAMP_DECEL / SPEED_AUTO_FAST."
+        )
 
     # ---- 1. GRÁFICA DE VELOCIDAD ----
     fig = go.Figure()
@@ -609,7 +654,6 @@ with tab_sim:
             p['carrier_pos_i'] = carrier_pos_i
             p['load_pos_i'] = load_pos_i
             p['slip_i'] = np.maximum(load_pos_i - carrier_pos_i, 0.0)
-            # Posición del borde delantero visual de la carga, con exageración aplicada SOLO al slip relativo
             p['lf_i'] = carrier_pos_i - margin + p['slip_i'] * exageracion
 
         n_lanes = len(perfiles)
@@ -618,7 +662,6 @@ with tab_sim:
         for idx, p in enumerate(perfiles):
             p['y_off'] = idx * lane_height
 
-        # ---- RANGO DE EJE FIJO (calculado una sola vez, nunca cambia entre frames) ----
         left_bound = min(float(np.min(p['carrier_pos_i'])) - carrier_largo for p in perfiles)
         right_bound = max(float(np.max(p['lf_i'])) for p in perfiles)
         pad = max((right_bound - left_bound) * 0.05, 80.0)
@@ -634,7 +677,6 @@ with tab_sim:
 
         for p in perfiles:
             y0c = p['y_off']
-            # Riel estático (no se mueve, solo referencia visual de fondo)
             fig_c.add_shape(type="line", x0=x_min_fixed, x1=x_max_fixed, y0=y0c, y1=y0c,
                              line=dict(color="#bbbbbb", width=2))
             fig_c.add_shape(type="line", x0=p['pos_sensor_red'], x1=p['pos_sensor_red'],
@@ -706,8 +748,6 @@ with tab_sim:
                                           text=[txt], textfont=dict(color="#e74c3c" if is_slip_now else "#333")))
                 idx_k.append(fi + 2)
 
-            # NOTA: no se actualiza 'layout' en ningún frame -> el eje, el grid y los
-            # sensores permanecen absolutamente estáticos en todo momento.
             frames.append(go.Frame(data=data_k, traces=idx_k, name=str(k)))
 
         fig_c.frames = frames
@@ -838,18 +878,29 @@ with tab_math:
     st.markdown(
         "En condiciones típicas (μ≈0.28, velocidades de creep bajas), este deslizamiento resulta del orden de "
         "**fracciones de milímetro a pocos milímetros** — imperceptible a escala real, por lo que la animación "
-        "incluye un factor de exageración visual aplicado únicamente al desplazamiento relativo (nunca a la posición absoluta). "
-        "El eje de la gráfica, el grid y las líneas de sensores se calculan una sola vez con un rango fijo que "
-        "contiene todo el recorrido posible del conjunto, garantizando que **el único elemento que se mueve en pantalla "
-        "sea el Carrier y la Carga**."
+        "incluye un factor de exageración visual aplicado únicamente al desplazamiento relativo (nunca a la posición absoluta)."
     )
 
-    st.subheader("7. Integration Engine & Kinematic Profiles")
+    st.subheader("7. Sensor Distance Validation (Bug Fix)")
+    st.markdown(L(
+        "The distance between the reduction sensor and the stop sensor ($S_{~text{distance}}$) must be large enough "
+        "for the belt to decelerate from $v_{~text{fast}}$ to $v_{~text{slow}}$ using the configured RAMP_DECEL:"
+    ))
+    st.latex(L(r"d_{~text{needed}} = ~frac{v_{~text{fast}}^2 - v_{~text{slow}}^2}{2 ~cdot ~text{RAMP~_DECEL}}"))
+    st.markdown(L(
+        "If $d_{~text{needed}} > S_{~text{distance}}$, the system reaches the stop sensor **before** finishing the "
+        "deceleration ramp — the position trigger for the stop sensor is evaluated globally at every time step "
+        "(regardless of kinematic state) so the final stop deceleration always engages exactly at $L_{~text{total}}$, "
+        "preventing RAMP_DECEL from incorrectly contaminating the overrun calculation."
+    ))
+
+    st.subheader("8. Integration Engine & Kinematic Profiles")
     st.markdown(L(
         "The state machine integrates velocity and position at a step size of $~Delta t = 1~,~text{ms}$:\\n\\n"
         "1. **ACCEL_FAST**: Accelerates at RAMP_ACCEL up to SPEED_AUTO_FAST.\\n"
         "2. **CRUISE_FAST**: Maintains fast cruise speed until reaching $P_{~text{reduction}} = L_{~text{total}} - S_{~text{distance}}$.\\n"
         "3. **DECEL_TO_SLOW**: Decelerates at RAMP_DECEL down to SPEED_AUTO_SLOW.\\n"
         "4. **CRUISE_SLOW**: Creeps at slow speed until reaching $P_{~text{stop}} = L_{~text{total}}$.\\n"
-        "5. **DECEL_TO_STOP**: Final stop deceleration based on $t_{~text{stop~_real}}$."
+        "5. **DECEL_TO_STOP**: Final stop deceleration based on $t_{~text{stop~_real}}$, triggered at $L_{~text{total}}$ "
+        "regardless of current kinematic state."
     ))
