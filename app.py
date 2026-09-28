@@ -93,19 +93,15 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
     t_sensor_red = 0.0
     t_sensor_stop = 0.0
 
-    # 1. Piso de elasticidad mecánica (mínimo 20 ms)
     T_MIN_MECANICO_MS = 20.0
     ramp_stop_real_ms = max(ramp_stop_ms, T_MIN_MECANICO_MS)
 
-    # 2. Deceleración real del conveyor (mm/s² y Gs)
     a_stop_conveyor = v_slow / (ramp_stop_real_ms / 1000.0)
     g_conveyor = a_stop_conveyor / 9810.0
 
-    # 3. Límite de fricción estática (mm/s² y Gs)
     g_max_pieza = mu
     a_max_pieza = mu * 9810.0
 
-    last_i = steps - 1
     for i in range(1, steps):
         t[i] = t[i - 1] + dt
 
@@ -138,7 +134,6 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
         p += v * dt
         pos[i] = p
         vel[i] = v
-        last_i = i
 
         if state == "DONE" and i > 50 and np.all(vel[i - 20:i] == 0):
             t = t[:i + 1]
@@ -147,8 +142,8 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
             break
 
     dist_overrun_conveyor = pos[-1] - pos_stop
+    overrun_time = t[-1] - t_sensor_stop if t_sensor_stop > 0 else 0.0
 
-    # 4. Cálculo cinemático de deslizamiento (mm)
     se_desliza = g_conveyor > g_max_pieza
     if se_desliza:
         dist_freno_pieza = (v_slow ** 2) / (2.0 * a_max_pieza)
@@ -169,18 +164,20 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
         "dist_freno_conveyor": dist_freno_conveyor,
     }
 
-    return t, pos, vel, t_sensor_red, t_sensor_stop, dist_overrun_conveyor, g_conveyor, g_pieza_real, se_desliza, deslizamiento_mm, details
+    return t, pos, vel, t_sensor_red, t_sensor_stop, dist_overrun_conveyor, overrun_time, g_conveyor, g_pieza_real, se_desliza, deslizamiento_mm, details
 
 
 # SIMULATION EXECUTION
-t_a, pos_a, vel_a, t_red_a, t_stop_a, overrun_a, g_conv_a, g_pieza_a, desliza_a, d_desliza_a, det_a = calcular_perfil(
+(t_a, pos_a, vel_a, t_red_a, t_stop_a, overrun_a, overrun_time_a,
+ g_conv_a, g_pieza_a, desliza_a, d_desliza_a, det_a) = calcular_perfil(
     st.session_state.speed_fast_a, st.session_state.speed_slow_a, st.session_state.accel_a,
     st.session_state.decel_a, st.session_state.conveyor_length, st.session_state.sensor_distance_a,
     st.session_state.ramp_stop_a, st.session_state.mu_a
 )
 
 if st.session_state.comparar:
-    t_b, pos_b, vel_b, t_red_b, t_stop_b, overrun_b, g_conv_b, g_pieza_b, desliza_b, d_desliza_b, det_b = calcular_perfil(
+    (t_b, pos_b, vel_b, t_red_b, t_stop_b, overrun_b, overrun_time_b,
+     g_conv_b, g_pieza_b, desliza_b, d_desliza_b, det_b) = calcular_perfil(
         st.session_state.speed_fast_b, st.session_state.speed_slow_b, st.session_state.accel_b,
         st.session_state.decel_b, st.session_state.conveyor_length, st.session_state.sensor_distance_b,
         st.session_state.ramp_stop_b, st.session_state.mu_b
@@ -194,7 +191,7 @@ tab_sim, tab_math = st.tabs(["📊 Simulation & Dashboard", "📚 Mathematical B
 # ==========================================
 with tab_sim:
 
-    # ---- GRÁFICA DE VELOCIDAD (única gráfica; la de posición fue eliminada) ----
+    # ---- 1. GRÁFICA DE VELOCIDAD ----
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=t_a, y=vel_a, mode='lines', name='Velocity Profile A',
                               line=dict(color='#1f77b4', width=3)))
@@ -211,100 +208,15 @@ with tab_sim:
         title="Velocity Profile (mm/s) vs Time (s)",
         xaxis_title="Time (s)",
         yaxis_title="Velocity (mm/s)",
-        height=480,
+        height=460,
         template="plotly_white",
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="center", x=0.5, font=dict(size=10)),
-        margin=dict(b=120)
+        margin=dict(b=110)
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # ---- ANIMACIÓN: BOLITA RECORRIENDO EL CONVEYOR ----
-    st.markdown("---")
-    st.subheader("🎬 Animación en Tiempo Real: Recorrido de la Pieza")
-    st.caption("La posición y velocidad de la bolita se interpolan directamente de la física simulada. "
-               "Usa Play/Pause o arrastra el slider para explorar el recorrido.")
-
-    def construir_animacion(t_a, pos_a, vel_a, t_b=None, pos_b=None, vel_b=None, length=3000.0, n_frames=180):
-        t_end = t_a[-1] if t_b is None else max(t_a[-1], t_b[-1])
-        frame_times = np.linspace(0, t_end, n_frames)
-
-        pos_a_i = np.interp(frame_times, t_a, pos_a)
-        vel_a_i = np.interp(frame_times, t_a, vel_a)
-
-        tiene_b = t_b is not None
-        if tiene_b:
-            pos_b_i = np.interp(frame_times, t_b, pos_b)
-            vel_b_i = np.interp(frame_times, t_b, vel_b)
-
-        fig_anim = go.Figure()
-
-        # Carriles estáticos del conveyor
-        fig_anim.add_shape(type="line", x0=0, x1=length, y0=1, y1=1,
-                            line=dict(color="lightgray", width=10))
-        if tiene_b:
-            fig_anim.add_shape(type="line", x0=0, x1=length, y0=0, y1=0,
-                                line=dict(color="lightgray", width=10))
-
-        # Marcadores iniciales
-        fig_anim.add_trace(go.Scatter(
-            x=[pos_a_i[0]], y=[1], mode="markers+text",
-            marker=dict(size=22, color="#1f77b4"),
-            text=[f"A: {vel_a_i[0]:.0f} mm/s"], textposition="top center",
-            name="Pieza - Perfil A"
-        ))
-        if tiene_b:
-            fig_anim.add_trace(go.Scatter(
-                x=[pos_b_i[0]], y=[0], mode="markers+text",
-                marker=dict(size=22, color="#9467bd"),
-                text=[f"B: {vel_b_i[0]:.0f} mm/s"], textposition="top center",
-                name="Pieza - Perfil B"
-            ))
-
-        frames = []
-        for k in range(n_frames):
-            data_k = [go.Scatter(x=[pos_a_i[k]], y=[1], text=[f"A: {vel_a_i[k]:.0f} mm/s"])]
-            if tiene_b:
-                data_k.append(go.Scatter(x=[pos_b_i[k]], y=[0], text=[f"B: {vel_b_i[k]:.0f} mm/s"]))
-            frames.append(go.Frame(data=data_k, name=str(k)))
-
-        fig_anim.frames = frames
-
-        frame_ms = max(1000 * (frame_times[1] - frame_times[0]), 20) if n_frames > 1 else 50
-
-        fig_anim.update_layout(
-            height=280,
-            template="plotly_white",
-            xaxis=dict(title="Posición (mm)", range=[-100, length + 200]),
-            yaxis=dict(visible=False, range=[-0.5, 1.5]),
-            showlegend=True,
-            updatemenus=[dict(
-                type="buttons", showactive=False, y=1.15, x=0.02, xanchor="left",
-                buttons=[
-                    dict(label="▶ Play", method="animate",
-                         args=[None, dict(frame=dict(duration=frame_ms, redraw=True),
-                                           fromcurrent=True, transition=dict(duration=0))]),
-                    dict(label="⏸ Pause", method="animate",
-                         args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])
-                ]
-            )],
-            sliders=[dict(
-                steps=[dict(method="animate", args=[[str(k)],
-                            dict(mode="immediate", frame=dict(duration=0, redraw=True))],
-                            label=f"{frame_times[k]:.1f}s") for k in range(n_frames)],
-                transition=dict(duration=0), x=0.02, len=0.96
-            )]
-        )
-        return fig_anim
-
-    if st.session_state.comparar:
-        fig_anim = construir_animacion(t_a, pos_a, vel_a, t_b, pos_b, vel_b, st.session_state.conveyor_length)
-    else:
-        fig_anim = construir_animacion(t_a, pos_a, vel_a, length=st.session_state.conveyor_length)
-
-    st.plotly_chart(fig_anim, use_container_width=True)
-
-    # ---- Métricas: Inercia y Fricción ----
+    # ---- 2. SLIP ANALYSIS (justo debajo de la gráfica principal) ----
     st.markdown("---")
     st.subheader("📊 Inertia & Part Slip Analysis (Profile A)")
     col1, col2, col3, col4 = st.columns(4)
@@ -337,7 +249,7 @@ with tab_sim:
         else:
             st.success(f"🟢 **STABLE LOAD:** $g_{{\\\\text{{conv}}}}$ ({g_conv_a:.3f} G) ≤ μ ({st.session_state.mu_a:.2f} G). Friction holds the part securely. Relative Part Slip = **0.00 mm**.")
 
-    # ---- Métricas: Posicionamiento y Tiempo de Ciclo ----
+    # ---- 3. Positioning & Cycle Time ----
     st.markdown("---")
     st.subheader("🎯 Positioning & Cycle Time (Profile A)")
     col5, col6, col7, col8 = st.columns(4)
@@ -346,7 +258,7 @@ with tab_sim:
     col7.metric("Final Part Position", f"{(pos_a[-1] + d_desliza_a):.2f} mm")
     col8.metric("Total Motion Time", f"{t_a[-1]:.2f} s")
 
-    # ---- Comparación A vs B ----
+    # ---- 4. Comparación A vs B ----
     if st.session_state.comparar:
         st.markdown("---")
         st.subheader("⚖️ Profile A vs Profile B Comparison")
@@ -355,6 +267,163 @@ with tab_sim:
         c_b2.metric("Part Slip Profile B", f"{d_desliza_b:.2f} mm", delta=f"{(d_desliza_b - d_desliza_a):.2f} mm", delta_color="inverse")
         c_b3.metric("Final Part Pos B", f"{(pos_b[-1] + d_desliza_b):.2f} mm")
         c_b4.metric("Cycle Time Delta", f"{t_b[-1]:.2f} s", delta=f"{(t_b[-1] - t_a[-1]):.2f} s", delta_color="inverse")
+
+    # ==========================================
+    # 5. ANIMACIÓN TIPO "BARRA DE PROGRESO" (AL FINAL DE LA PÁGINA)
+    # ==========================================
+    st.markdown("---")
+    st.subheader("🎬 Animación en Tiempo Real: Recorrido de la Pieza")
+    st.caption("La barra se rellena de color conforme la pieza avanza. Usa Play/Pause o el slider para explorar el recorrido a detalle.")
+
+    def construir_animacion_barra(perfiles, length, n_frames=180):
+        t_end = max(p['t'][-1] for p in perfiles)
+        frame_times = np.linspace(0, t_end, n_frames)
+
+        for p in perfiles:
+            p['pos_i'] = np.interp(frame_times, p['t'], p['pos'])
+            p['vel_i'] = np.interp(frame_times, p['t'], p['vel'])
+
+        n_perfiles = len(perfiles)
+        x_max = length * 1.22
+
+        fig_bar = go.Figure()
+
+        annotations_static = [
+            dict(x=0, y=1.14, xref="x", yref="paper", text="<b>Start</b>",
+                 showarrow=False, font=dict(size=12, color="gray")),
+            dict(x=length, y=1.14, xref="x", yref="paper", text="<b>Ziel</b>",
+                 showarrow=False, font=dict(size=12, color="#444")),
+        ]
+
+        for idx, p in enumerate(perfiles):
+            row = idx
+            color = p['color']
+
+            param_text = (f"<b>{p['label']}</b><br>"
+                          f"v_fast={p['v_fast']:.0f} mm/s | v_slow={p['v_slow']:.0f} mm/s<br>"
+                          f"t_ciclo={p['t'][-1]:.2f} s")
+            annotations_static.append(
+                dict(x=0.0, y=row, xref="paper", yref="y", text=param_text,
+                     showarrow=False, align="left", xanchor="left",
+                     font=dict(size=11, color="#333"), xshift=-15)
+            )
+
+            # Overrun annotation (solo para el primer perfil / Perfil A)
+            if 'overrun_mm' in p:
+                annotations_static.append(
+                    dict(x=length, y=row + 0.38, xref="x", yref="y",
+                         text=f"<b>Overrun: +{p['overrun_mm']:.1f} mm  (+{p['overrun_time']*1000:.0f} ms)</b>",
+                         showarrow=True, arrowhead=2, ax=40, ay=-25,
+                         font=dict(size=11, color="#b00000"),
+                         bgcolor="rgba(255,235,235,0.9)", bordercolor="#b00000")
+                )
+
+            # Track de fondo (gris, estático)
+            fig_bar.add_trace(go.Bar(
+                x=[length], y=[row], base=[0], orientation='h', width=0.5,
+                marker_color="rgba(220,220,220,0.6)", showlegend=False, hoverinfo='skip'
+            ))
+            # Barra rellena (se anima)
+            fig_bar.add_trace(go.Bar(
+                x=[p['pos_i'][0]], y=[row], base=[0], orientation='h', width=0.5,
+                marker_color=color, showlegend=False, hoverinfo='skip', opacity=0.85
+            ))
+            # Marcador cuadrado en la punta (se anima)
+            fig_bar.add_trace(go.Scatter(
+                x=[p['pos_i'][0]], y=[row], mode='markers',
+                marker=dict(size=20, color=color, symbol='square', line=dict(color='black', width=2)),
+                showlegend=False, hoverinfo='skip'
+            ))
+            # Lectura dinámica a la derecha (se anima)
+            pct0 = 100.0 * p['pos_i'][0] / length
+            fig_bar.add_trace(go.Scatter(
+                x=[x_max * 0.98], y=[row], mode='text',
+                text=[f"<b>{p['pos_i'][0]:.0f} mm</b><br>{p['vel_i'][0]:.1f} mm/s<br>{pct0:.0f}%"],
+                textposition="middle left", showlegend=False, hoverinfo='skip',
+                textfont=dict(size=11, color="#333")
+            ))
+
+        frames = []
+        for k in range(n_frames):
+            frame_data = []
+            trace_indices = []
+            for idx, p in enumerate(perfiles):
+                base_idx = idx * 4
+                filled_idx = base_idx + 1
+                marker_idx = base_idx + 2
+                text_idx = base_idx + 3
+
+                pos_k = p['pos_i'][k]
+                vel_k = p['vel_i'][k]
+                pct_k = 100.0 * pos_k / length
+
+                frame_data.append(go.Bar(x=[pos_k], y=[idx], base=[0]))
+                trace_indices.append(filled_idx)
+
+                frame_data.append(go.Scatter(x=[pos_k], y=[idx]))
+                trace_indices.append(marker_idx)
+
+                frame_data.append(go.Scatter(
+                    x=[x_max * 0.98], y=[idx],
+                    text=[f"<b>{pos_k:.0f} mm</b><br>{vel_k:.1f} mm/s<br>{pct_k:.0f}%"]
+                ))
+                trace_indices.append(text_idx)
+
+            frames.append(go.Frame(data=frame_data, traces=trace_indices, name=str(k)))
+
+        fig_bar.frames = frames
+        frame_ms = max(1000 * (frame_times[1] - frame_times[0]), 20) if n_frames > 1 else 50
+
+        fig_bar.update_layout(
+            height=160 + n_perfiles * 150,
+            template="plotly_white",
+            barmode='overlay',
+            xaxis=dict(title="Posición (mm)", range=[-length * 0.05, x_max], zeroline=False),
+            yaxis=dict(visible=False, range=[-0.6, n_perfiles - 0.4 + 0.6]),
+            annotations=annotations_static,
+            margin=dict(l=220, t=70, b=70, r=110),
+            updatemenus=[dict(
+                type="buttons", showactive=False, y=1.20, x=0.0, xanchor="left",
+                buttons=[
+                    dict(label="▶ Play", method="animate",
+                         args=[None, dict(frame=dict(duration=frame_ms, redraw=True),
+                                           fromcurrent=True, transition=dict(duration=0))]),
+                    dict(label="⏸ Pause", method="animate",
+                         args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])
+                ]
+            )],
+            sliders=[dict(
+                steps=[dict(method="animate", args=[[str(k)],
+                            dict(mode="immediate", frame=dict(duration=0, redraw=True))],
+                            label=f"{frame_times[k]:.1f}s") for k in range(n_frames)],
+                x=0.0, len=0.96, y=-0.08
+            )]
+        )
+        return fig_bar
+
+    perfiles_animacion = [
+        {
+            "label": "Perfil A",
+            "color": "#1f77b4",
+            "t": t_a, "pos": pos_a, "vel": vel_a,
+            "v_fast": st.session_state.speed_fast_a,
+            "v_slow": st.session_state.speed_slow_a,
+            "overrun_mm": overrun_a,
+            "overrun_time": overrun_time_a,
+        }
+    ]
+    if st.session_state.comparar:
+        perfiles_animacion.append({
+            "label": "Perfil B",
+            "color": "#d62728",
+            "t": t_b, "pos": pos_b, "vel": vel_b,
+            "v_fast": st.session_state.speed_fast_b,
+            "v_slow": st.session_state.speed_slow_b,
+        })
+
+    fig_bar = construir_animacion_barra(perfiles_animacion, st.session_state.conveyor_length)
+    st.plotly_chart(fig_bar, use_container_width=True)
+
 
 # ==========================================
 # TAB 2: MATHEMATICAL & PHYSICAL BACKGROUND
