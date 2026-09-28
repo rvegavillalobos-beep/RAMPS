@@ -19,6 +19,13 @@ st.title("Kinematic & Physics Conveyor Simulator")
 st.markdown("Real time analysis of velocity profile, positioning, and inertial part slip.")
 
 # ==========================================
+# CONSTANTES FÍSICAS DE LA CARGA (NO CONFIGURABLES)
+# ==========================================
+CONVEYOR_ALTO_MM = 250.0   # 25 cm - altura estructural del conveyor
+CARGA_ALTO_MM = 130.0      # 13 cm - altura de la carga
+CARGA_LARGO_MM = 1200.0    # 120 cm - largo de la carga
+
+# ==========================================
 # SESSION STATE INITIALIZATION
 # ==========================================
 defaults = {
@@ -340,17 +347,16 @@ with tab_sim:
                     delta=f"{(t_b[-1] - t_a[-1]):.2f} s", delta_color="inverse")
 
     # ==========================================
-    # 5. ANIMACIÓN — Calidad siempre ALTA + control de velocidad corregido
+    # 5. ANIMACIÓN — Riel General (Calidad Alta fija)
     # ==========================================
     st.markdown("---")
     st.subheader("🎬 Animación en Tiempo Real: Recorrido de la Pieza")
-    st.caption("El riel se colorea conforme la pieza avanza. Calidad fijada en Alta (260 frames). "
-               "El control de velocidad ahora sí modifica el ritmo de reproducción (se corrigió un problema de redibujado pesado en Plotly).")
+    st.caption("El riel se colorea conforme la pieza avanza. Calidad fijada en Alta (260 frames).")
 
-    velocidad_reproduccion = st.select_slider("Velocidad de reproducción", options=["0.5x", "1x", "2x", "4x"], value="1x")
+    velocidad_reproduccion = st.select_slider("Velocidad de reproducción", options=["0.5x", "1x", "2x", "4x"], value="1x", key="vel_riel")
     speed_map = {"0.5x": 0.5, "1x": 1.0, "2x": 2.0, "4x": 4.0}
     speed_mult = speed_map[velocidad_reproduccion]
-    n_frames = 260  # Calidad Alta fija
+    n_frames = 260
 
     STATE_INFO = {
         "ACCEL_FAST":    ("🚀", "Acelerando"),
@@ -477,11 +483,6 @@ with tab_sim:
             frames.append(go.Frame(data=data_k, traces=idx_k, name=str(k)))
 
         fig_t.frames = frames
-
-        # ---- CÁLCULO DE VELOCIDAD DE REPRODUCCIÓN (CORREGIDO) ----
-        # Se acota la duración total de reproducción entre 4s y 16s (independiente
-        # del tiempo de ciclo real, que puede ser muy corto o muy largo) para que
-        # el multiplicador de velocidad tenga un efecto siempre perceptible.
         target_total_ms = float(np.clip(t_end * 1000.0, 4000.0, 16000.0))
         frame_ms = max((target_total_ms / n_frames) / speed_mult, 8.0)
 
@@ -548,6 +549,180 @@ with tab_sim:
     fig_track = construir_track(perfiles_animacion, st.session_state.conveyor_length, n_frames, speed_mult)
     st.plotly_chart(fig_track, use_container_width=True)
 
+    # ==========================================
+    # 6. VISTA FÍSICA DETALLADA: CARGA SOBRE EL CONVEYOR (ZOOM)
+    # ==========================================
+    st.markdown("---")
+    st.subheader("🔬 Vista Física Detallada: Carga sobre el Conveyor (Zoom)")
+    st.caption(
+        f"Zoom automático desde el Sensor de Reducción hasta que la carga se detiene por completo. "
+        f"Conveyor a escala real (largo total = {st.session_state.conveyor_length:.0f} mm). "
+        f"Carga fija: {CARGA_LARGO_MM/10:.0f} cm largo × {CARGA_ALTO_MM/10:.0f} cm alto. "
+        f"La carga se pone en rojo cuando desliza activamente sobre la banda ya detenida."
+    )
+
+    velocidad_zoom = st.select_slider("Velocidad de reproducción (Zoom)", options=["0.5x", "1x", "2x", "4x"], value="1x", key="vel_zoom")
+    speed_mult_zoom = speed_map[velocidad_zoom]
+    n_frames_zoom = 220
+
+    def construir_zoom_carga(perfiles, length, n_frames, speed_mult,
+                              conveyor_alto=CONVEYOR_ALTO_MM, carga_alto=CARGA_ALTO_MM, carga_largo=CARGA_LARGO_MM):
+        for p in perfiles:
+            p['a_load'] = p['a_max_pieza'] if p['se_desliza'] else p['a_stop_conveyor']
+            p['t_load_stop'] = p['t_stop'] + (p['v_slow'] / p['a_load'] if p['a_load'] > 0 else 0.0)
+            p['pos_load_final'] = length + p['dist_freno_pieza']
+
+        t_start = min(p['t_red'] for p in perfiles)
+        t_end = max(max(p['t_load_stop'], p['t_full']) for p in perfiles)
+        frame_times = np.linspace(t_start, t_end, n_frames)
+
+        for p in perfiles:
+            pos_conv_i = np.interp(frame_times, p['t'], p['pos'])
+            pos_load_i = pos_conv_i.copy()
+            mask = frame_times >= p['t_stop']
+            dt = frame_times[mask] - p['t_stop']
+            t_full_load = p['v_slow'] / p['a_load'] if p['a_load'] > 0 else 0.0
+            seg = length + p['v_slow'] * dt - 0.5 * p['a_load'] * dt ** 2
+            seg = np.where(dt <= t_full_load, seg, p['pos_load_final'])
+            pos_load_i[mask] = seg
+            p['pos_conv_i'] = pos_conv_i
+            p['pos_load_i'] = pos_load_i
+
+        n_lanes = len(perfiles)
+        lane_gap = 160.0
+        lane_height = conveyor_alto + carga_alto + lane_gap
+        for idx, p in enumerate(perfiles):
+            p['y_off'] = idx * lane_height
+
+        x_min = min(p['pos_sensor_red'] - carga_largo for p in perfiles) - 60.0
+        x_max = max(p['pos_load_final'] for p in perfiles) + 60.0
+
+        fig_z = go.Figure()
+
+        fig_z.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="#ff7f0e", dash="dot", width=2), name="Sensor Reducción"))
+        fig_z.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="#d62728", dash="dash", width=2), name="Ziel (Sensor Paro)"))
+        fig_z.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="#333333", dash="dot", width=2), name="Banda Detenida (posición final conveyor)"))
+        fig_z.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color="rgba(220,50,50,0.5)", size=14, symbol='square'), name="Carga Deslizando (slip activo)"))
+
+        for p in perfiles:
+            y0c, y1c = p['y_off'], p['y_off'] + conveyor_alto
+            fig_z.add_shape(type="rect", x0=0, x1=length, y0=y0c, y1=y1c,
+                             fillcolor="#e9e9e9", line=dict(width=1, color="#cccccc"))
+            fig_z.add_shape(type="line", x0=p['pos_sensor_red'], x1=p['pos_sensor_red'],
+                             y0=y0c - 30, y1=y1c + carga_alto + 30,
+                             line=dict(color="#ff7f0e", width=2, dash="dot"))
+            fig_z.add_shape(type="line", x0=length, x1=length,
+                             y0=y0c - 30, y1=y1c + carga_alto + 30,
+                             line=dict(color="#d62728", width=2, dash="dash"))
+
+            pos_conv_final = p['pos'][-1]
+            fig_z.add_shape(type="line", x0=pos_conv_final, x1=pos_conv_final,
+                             y0=y0c - 15, y1=y1c + carga_alto + 15,
+                             line=dict(color="#333333", width=2, dash="dot"))
+
+            slip_final = p['dist_freno_pieza'] - (pos_conv_final - length)
+            info_txt = (f"<b>{p['label']}</b><br>"
+                        f"v_slow={p['v_slow']:.0f} mm/s<br>"
+                        f"μ={p['mu']:.2f}<br>"
+                        f"Slip final: {slip_final:.1f} mm")
+            fig_z.add_annotation(x=0.0, y=(y0c + y1c) / 2, xref="paper", yref="y", xanchor="left",
+                                  text=info_txt, showarrow=False, align="left",
+                                  font=dict(size=11, color="#333"), xshift=-18)
+
+        base_traces = len(fig_z.data)
+        for p in perfiles:
+            x1_0 = p['pos_load_i'][0]
+            x0_0 = x1_0 - carga_largo
+            y0l, y1l = p['y_off'] + conveyor_alto, p['y_off'] + conveyor_alto + carga_alto
+            fig_z.add_trace(go.Scatter(
+                x=[x0_0, x1_0, x1_0, x0_0, x0_0], y=[y0l, y0l, y1l, y1l, y0l],
+                mode='lines', fill='toself', fillcolor=p['color'],
+                line=dict(color='black', width=2), opacity=0.85, showlegend=False, hoverinfo='skip'
+            ))
+            fig_z.add_trace(go.Scatter(
+                x=[(x0_0 + x1_0) / 2], y=[y1l + 25], mode='text', text=["..."],
+                textfont=dict(size=11, color="#333"), showlegend=False, hoverinfo='skip'
+            ))
+
+        frames = []
+        for k, ft in enumerate(frame_times):
+            data_k = []
+            idx_k = []
+            for pi, p in enumerate(perfiles):
+                fi = base_traces + pi * 2
+                x1_k = p['pos_load_i'][k]
+                x0_k = x1_k - carga_largo
+                y0l, y1l = p['y_off'] + conveyor_alto, p['y_off'] + conveyor_alto + carga_alto
+                slip_now = max(p['pos_load_i'][k] - p['pos_conv_i'][k], 0.0)
+                is_slip_now = ft >= p['t_stop'] and slip_now > 0.5
+                color_now = "#e74c3c" if is_slip_now else p['color']
+
+                data_k.append(go.Scatter(x=[x0_k, x1_k, x1_k, x0_k, x0_k], y=[y0l, y0l, y1l, y1l, y0l],
+                                          fillcolor=color_now, line=dict(color='black', width=2)))
+                idx_k.append(fi)
+
+                txt = f"{x1_k:.0f} mm"
+                if is_slip_now:
+                    txt += f" ⚠️ deslizando +{slip_now:.1f} mm"
+                data_k.append(go.Scatter(x=[(x0_k + x1_k) / 2], y=[y1l + 25], text=[txt],
+                                          textfont=dict(color=color_now)))
+                idx_k.append(fi + 1)
+
+            frames.append(go.Frame(data=data_k, traces=idx_k, name=str(k)))
+
+        fig_z.frames = frames
+        target_total_ms = float(np.clip((t_end - t_start) * 1000.0, 3000.0, 12000.0))
+        frame_ms = max((target_total_ms / n_frames) / speed_mult, 8.0)
+
+        fig_z.update_layout(
+            height=180 + n_lanes * (conveyor_alto / 2 + carga_alto + 220),
+            template="plotly_white",
+            xaxis=dict(title="Posición (mm)", range=[x_min, x_max]),
+            yaxis=dict(visible=False, range=[-40, n_lanes * lane_height + 40]),
+            margin=dict(l=200, t=70, b=60, r=40),
+            legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center", font=dict(size=10)),
+            updatemenus=[dict(
+                type="buttons", showactive=False, y=1.15, x=0.0, xanchor="left",
+                buttons=[
+                    dict(label="▶ Play", method="animate",
+                         args=[None, dict(frame=dict(duration=frame_ms, redraw=False),
+                                           fromcurrent=True, transition=dict(duration=0), mode="immediate")]),
+                    dict(label="⏸ Pause", method="animate",
+                         args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])
+                ]
+            )],
+            sliders=[dict(
+                steps=[dict(method="animate", args=[[str(k)],
+                            dict(mode="immediate", frame=dict(duration=0, redraw=False))],
+                            label=f"{frame_times[k]:.2f}s") for k in range(n_frames)],
+                x=0.0, len=0.96, y=-0.28
+            )]
+        )
+        return fig_z
+
+    perfiles_zoom = [{
+        "label": "Perfil A", "color": "#1f77b4",
+        "t": t_a, "pos": pos_a,
+        "v_slow": st.session_state.speed_slow_a, "mu": st.session_state.mu_a,
+        "a_stop_conveyor": det_a['a_stop_conveyor'], "a_max_pieza": det_a['a_max_pieza'],
+        "se_desliza": desliza_a, "dist_freno_pieza": det_a['dist_freno_pieza'],
+        "t_stop": t_stop_a, "t_red": t_red_a, "pos_sensor_red": det_a['pos_sensor_red'],
+        "t_full": det_a['t_fully_stopped'],
+    }]
+    if st.session_state.comparar:
+        perfiles_zoom.append({
+            "label": "Perfil B", "color": "#d62728",
+            "t": t_b, "pos": pos_b,
+            "v_slow": st.session_state.speed_slow_b, "mu": st.session_state.mu_b,
+            "a_stop_conveyor": det_b['a_stop_conveyor'], "a_max_pieza": det_b['a_max_pieza'],
+            "se_desliza": desliza_b, "dist_freno_pieza": det_b['dist_freno_pieza'],
+            "t_stop": t_stop_b, "t_red": t_red_b, "pos_sensor_red": det_b['pos_sensor_red'],
+            "t_full": det_b['t_fully_stopped'],
+        })
+
+    fig_zoom = construir_zoom_carga(perfiles_zoom, st.session_state.conveyor_length, n_frames_zoom, speed_mult_zoom)
+    st.plotly_chart(fig_zoom, use_container_width=True)
+
 
 # ==========================================
 # TAB 2: MATHEMATICAL & PHYSICAL BACKGROUND
@@ -603,7 +778,17 @@ with tab_math:
     )
     st.latex(L(r"~mu_{~text{minimo requerido}} = g_{~text{conv}}"))
 
-    st.subheader("6. Integration Engine & Kinematic Profiles")
+    st.subheader("6. Load Trajectory During Slip (Zoom View)")
+    st.markdown(L(
+        "During the DECEL_TO_STOP phase, the conveyor belt and the transported load decelerate independently. "
+        "Let $a_{~text{load}}$ be the effective deceleration governing the load: equal to $a_{~text{max~_piece}}$ if slip is active, "
+        "or equal to $a_{~text{stop}}$ otherwise (moving in lockstep with the belt):"
+    ))
+    st.latex(L(r"v_{~text{load}}(t) = ~max~left(v_{~text{slow}} - a_{~text{load}} ~cdot (t - t_{~text{stop}}),~ 0~right)"))
+    st.latex(L(r"x_{~text{load}}(t) = L_{~text{total}} + v_{~text{slow}} ~cdot (t-t_{~text{stop}}) - ~frac{1}{2} a_{~text{load}} (t-t_{~text{stop}})^2"))
+    st.markdown("This trajectory is what powers the zoomed physical animation showing the load sliding forward over the already-stopped belt.")
+
+    st.subheader("7. Integration Engine & Kinematic Profiles")
     st.markdown(L(
         "The state machine integrates velocity and position at a step size of $~Delta t = 1~,~text{ms}$:\\n\\n"
         "1. **ACCEL_FAST**: Accelerates at RAMP_ACCEL up to SPEED_AUTO_FAST.\\n"
