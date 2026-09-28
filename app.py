@@ -3,6 +3,19 @@ import numpy as np
 import plotly.graph_objects as go
 
 # ==========================================
+# BACKSLASH-SAFE LATEX HELPER
+# ==========================================
+# Algunas canalizaciones de texto/chat eliminan backslashes sueltos al
+# transmitir código. Para garantizar que las fórmulas LaTeX se rendericen
+# correctamente, construimos el backslash con chr(92) y usamos '~' como
+# marcador de posición dentro de las plantillas LaTeX.
+BS = chr(92)
+
+def L(template: str) -> str:
+    """Reemplaza '~' por un backslash real para construir LaTeX válido."""
+    return template.replace("~", BS)
+
+# ==========================================
 # PAGE CONFIGURATION
 # ==========================================
 st.set_page_config(page_title="Kinematic & Physics Conveyor Simulator", layout="wide")
@@ -153,7 +166,6 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
         deslizamiento_mm = 0.0
         g_pieza_real = g_conveyor
 
-    # Safety KPIs
     factor_seguridad = (mu / g_conveyor) if g_conveyor > 0 else float('inf')
     mu_minimo_requerido = g_conveyor
 
@@ -176,7 +188,6 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
             g_conveyor, g_pieza_real, se_desliza, deslizamiento_mm, details)
 
 
-# SIMULATION EXECUTION
 (t_a, pos_a, vel_a, t_red_a, t_stop_a, overrun_a, overrun_time_a,
  g_conv_a, g_pieza_a, desliza_a, d_desliza_a, det_a) = calcular_perfil(
     st.session_state.speed_fast_a, st.session_state.speed_slow_a, st.session_state.accel_a,
@@ -192,7 +203,6 @@ if st.session_state.comparar:
         st.session_state.ramp_stop_b, st.session_state.mu_b
     )
 
-# TABS
 tab_sim, tab_math = st.tabs(["📊 Simulation & Dashboard", "📚 Mathematical Background & Physics Engine"])
 
 # ==========================================
@@ -200,24 +210,37 @@ tab_sim, tab_math = st.tabs(["📊 Simulation & Dashboard", "📚 Mathematical B
 # ==========================================
 with tab_sim:
 
-    # ---- 1. GRÁFICA DE VELOCIDAD ----
+    # ---- 1. GRÁFICA DE VELOCIDAD (sensores siempre visibles y dinámicos) ----
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=t_a, y=vel_a, mode='lines', name='Velocity Profile A',
                               line=dict(color='#1f77b4', width=3)))
-    fig.add_trace(go.Scatter(x=[t_red_a, t_red_a], y=[0, max(vel_a) * 1.1], mode='lines',
-                              name='Slowdown Sensor A', line=dict(color="#ff7f0e", width=2, dash="dot")))
-    fig.add_trace(go.Scatter(x=[t_stop_a, t_stop_a], y=[0, max(vel_a) * 1.1], mode='lines',
-                              name='Stop Sensor A', line=dict(color="#d62728", width=2, dash="dash")))
     if st.session_state.comparar:
         fig.add_trace(go.Scatter(x=t_b, y=vel_b, mode='lines', name='Velocity Profile B',
                                   line=dict(color='#9467bd', width=3, dash='dashdot')))
 
+    # add_vline garantiza que la línea siempre atraviese el 100% de la altura
+    # del gráfico (coordenadas de "paper"), sin importar cómo cambie la escala
+    # de velocidad, y la etiqueta muestra el tiempo exacto recalculado.
+    fig.add_vline(x=t_red_a, line_width=2, line_dash="dot", line_color="#ff7f0e",
+                  annotation_text=f"Sensor Reducción A · {t_red_a:.2f}s",
+                  annotation_position="top left", annotation_font_size=10, annotation_font_color="#ff7f0e")
+    fig.add_vline(x=t_stop_a, line_width=2, line_dash="dash", line_color="#d62728",
+                  annotation_text=f"Sensor Paro A · {t_stop_a:.2f}s",
+                  annotation_position="top right", annotation_font_size=10, annotation_font_color="#d62728")
+    if st.session_state.comparar:
+        fig.add_vline(x=t_red_b, line_width=2, line_dash="dot", line_color="#9467bd",
+                      annotation_text=f"Sensor Reducción B · {t_red_b:.2f}s",
+                      annotation_position="bottom left", annotation_font_size=10, annotation_font_color="#9467bd")
+        fig.add_vline(x=t_stop_b, line_width=2, line_dash="dash", line_color="#6f4a94",
+                      annotation_text=f"Sensor Paro B · {t_stop_b:.2f}s",
+                      annotation_position="bottom right", annotation_font_size=10, annotation_font_color="#6f4a94")
+
     fig.update_layout(
         title="Velocity Profile (mm/s) vs Time (s)",
         xaxis_title="Time (s)", yaxis_title="Velocity (mm/s)",
-        height=460, template="plotly_white", hovermode="x unified",
+        height=480, template="plotly_white", hovermode="x unified",
         legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="center", x=0.5, font=dict(size=10)),
-        margin=dict(b=110)
+        margin=dict(b=110, t=90)
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -241,22 +264,57 @@ with tab_sim:
     expander_title = "🔍 View Calculation Step by Step Breakdown (Profile A)" if desliza_a else "ℹ️ View Stability & Deceleration Math (Profile A)"
     with st.expander(expander_title):
         st.markdown("### 🧮 Live Calculation Breakdown (Simulated Values)")
+
         st.markdown("**Step 1: Effective Stop Ramp Time**")
-        st.latex(rf"t_{{\\text{{stop\\_real}}}} = \\max({st.session_state.ramp_stop_a:.1f}\\,\\text{{ms}}, 20.0\\,\\text{{ms}}) = {det_a['ramp_stop_real_ms']:.1f}\\,\\text{{ms}} = {det_a['ramp_stop_real_ms']/1000.0:.3f}\\,\\text{{s}}")
+        st.latex(L(
+            f"t_{{~text{{stop_real}}}} = ~max({st.session_state.ramp_stop_a:.1f}~,~text{{ms}}, "
+            f"20.0~,~text{{ms}}) = {det_a['ramp_stop_real_ms']:.1f}~,~text{{ms}} = "
+            f"{det_a['ramp_stop_real_ms']/1000.0:.3f}~,~text{{s}}"
+        ))
+
         st.markdown("**Step 2: Conveyor Stop Deceleration**")
-        st.latex(rf"a_{{\\text{{stop}}}} = \\frac{{{st.session_state.speed_slow_a:.1f}\\,\\text{{mm/s}}}}{{{det_a['ramp_stop_real_ms']/1000.0:.3f}\\,\\text{{s}}}} = {det_a['a_stop_conveyor']:.2f}\\,\\text{{mm/s}}^2")
-        st.latex(rf"g_{{\\text{{conv}}}} = \\frac{{{det_a['a_stop_conveyor']:.2f}\\,\\text{{mm/s}}^2}}{{9810\\,\\text{{mm/s}}^2}} = \\mathbf{{{g_conv_a:.3f}\\,\\text{{G}}}}")
+        st.latex(L(
+            f"a_{{~text{{stop}}}} = ~frac{{{st.session_state.speed_slow_a:.1f}~,~text{{mm/s}}}}"
+            f"{{{det_a['ramp_stop_real_ms']/1000.0:.3f}~,~text{{s}}}} = {det_a['a_stop_conveyor']:.2f}~,~text{{mm/s}}^2"
+        ))
+        st.latex(L(
+            f"g_{{~text{{conv}}}} = ~frac{{{det_a['a_stop_conveyor']:.2f}~,~text{{mm/s}}^2}}"
+            f"{{9810~,~text{{mm/s}}^2}} = ~mathbf{{{g_conv_a:.3f}~,~text{{G}}}}"
+        ))
+
         st.markdown("**Step 3: Maximum Allowable Friction Acceleration**")
-        st.latex(rf"a_{{\\text{{max\\_piece}}}} = \\mu \\cdot g = {st.session_state.mu_a:.2f} \\cdot 9810\\,\\text{{mm/s}}^2 = {det_a['a_max_pieza']:.2f}\\,\\text{{mm/s}}^2 \\quad (\\mu = \\mathbf{{{st.session_state.mu_a:.2f}\\,\\text{{G}}}})")
+        st.latex(L(
+            f"a_{{~text{{max_piece}}}} = ~mu ~cdot g = {st.session_state.mu_a:.2f} ~cdot 9810~,~text{{mm/s}}^2 "
+            f"= {det_a['a_max_pieza']:.2f}~,~text{{mm/s}}^2 ~quad (~mu = ~mathbf{{{st.session_state.mu_a:.2f}~,~text{{G}}}})"
+        ))
+
         st.markdown("**Step 4: Slip Decision Criteria**")
         if desliza_a:
-            st.error(f"🔴 **SLIP DETECTED:** $g_{{\\\\text{{conv}}}}$ ({g_conv_a:.3f} G) > μ ({st.session_state.mu_a:.2f} G). Stopping force exceeds static friction capacity!")
+            st.error(
+                f"🔴 **SLIP DETECTED:** g_conv ({g_conv_a:.3f} G) > μ ({st.session_state.mu_a:.2f} G). "
+                f"Stopping force exceeds static friction capacity!"
+            )
             st.markdown("**Step 5: Relative Slip Distance Calculation (Δd)**")
-            st.latex(rf"d_{{\\text{{piece}}}} = \\frac{{v_{{\\text{{slow}}}}^2}}{{2 \\cdot a_{{\\text{{max\\_piece}}}}}} = \\frac{{{st.session_state.speed_slow_a:.1f}^2}}{{2 \\cdot {det_a['a_max_pieza']:.2f}}} = {det_a['dist_freno_pieza']:.2f}\\,\\text{{mm}}")
-            st.latex(rf"d_{{\\text{{conveyor}}}} = \\frac{{v_{{\\text{{slow}}}}^2}}{{2 \\cdot a_{{\\text{{stop}}}}}} = \\frac{{{st.session_state.speed_slow_a:.1f}^2}}{{2 \\cdot {det_a['a_stop_conveyor']:.2f}}} = {det_a['dist_freno_conveyor']:.2f}\\,\\text{{mm}}")
-            st.latex(rf"\\Delta d = d_{{\\text{{piece}}}} - d_{{\\text{{conveyor}}}} = {det_a['dist_freno_pieza']:.2f} - {det_a['dist_freno_conveyor']:.2f} = \\mathbf{{{d_desliza_a:.2f}\\,\\text{{mm}}}}")
+            st.latex(L(
+                f"d_{{~text{{piece}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{max_piece}}}}}} = "
+                f"~frac{{{st.session_state.speed_slow_a:.1f}^2}}{{2 ~cdot {det_a['a_max_pieza']:.2f}}} = "
+                f"{det_a['dist_freno_pieza']:.2f}~,~text{{mm}}"
+            ))
+            st.latex(L(
+                f"d_{{~text{{conveyor}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{stop}}}}}} = "
+                f"~frac{{{st.session_state.speed_slow_a:.1f}^2}}{{2 ~cdot {det_a['a_stop_conveyor']:.2f}}} = "
+                f"{det_a['dist_freno_conveyor']:.2f}~,~text{{mm}}"
+            ))
+            st.latex(L(
+                f"~Delta d = d_{{~text{{piece}}}} - d_{{~text{{conveyor}}}} = "
+                f"{det_a['dist_freno_pieza']:.2f} - {det_a['dist_freno_conveyor']:.2f} = "
+                f"~mathbf{{{d_desliza_a:.2f}~,~text{{mm}}}}"
+            ))
         else:
-            st.success(f"🟢 **STABLE LOAD:** $g_{{\\\\text{{conv}}}}$ ({g_conv_a:.3f} G) ≤ μ ({st.session_state.mu_a:.2f} G). Friction holds the part securely. Relative Part Slip = **0.00 mm**.")
+            st.success(
+                f"🟢 **STABLE LOAD:** g_conv ({g_conv_a:.3f} G) ≤ μ ({st.session_state.mu_a:.2f} G). "
+                f"Friction holds the part securely. Relative Part Slip = **0.00 mm**."
+            )
 
     # ---- 3. Positioning & Cycle Time ----
     st.markdown("---")
@@ -267,33 +325,38 @@ with tab_sim:
     col7.metric("Final Part Position", f"{(pos_a[-1] + d_desliza_a):.2f} mm")
     col8.metric("Total Motion Time", f"{t_a[-1]:.2f} s")
 
-    # ---- 4. Comparación A vs B ----
+    # ---- 4. Comparación A vs B (con Delta de Overrun) ----
     if st.session_state.comparar:
         st.markdown("---")
         st.subheader("⚖️ Profile A vs Profile B Comparison")
+
         c_b1, c_b2, c_b3, c_b4 = st.columns(4)
-        c_b1.metric("Deceleration Profile B", f"{g_conv_b:.3f} G", delta=f"{(g_conv_b - g_conv_a):.3f} G", delta_color="inverse")
-        c_b2.metric("Part Slip Profile B", f"{d_desliza_b:.2f} mm", delta=f"{(d_desliza_b - d_desliza_a):.2f} mm", delta_color="inverse")
-        c_b3.metric("Final Part Pos B", f"{(pos_b[-1] + d_desliza_b):.2f} mm")
-        c_b4.metric("Cycle Time Delta", f"{t_b[-1]:.2f} s", delta=f"{(t_b[-1] - t_a[-1]):.2f} s", delta_color="inverse")
+        c_b1.metric("Deceleration Profile B", f"{g_conv_b:.3f} G",
+                    delta=f"{(g_conv_b - g_conv_a):.3f} G", delta_color="inverse")
+        c_b2.metric("Part Slip Profile B", f"{d_desliza_b:.2f} mm",
+                    delta=f"{(d_desliza_b - d_desliza_a):.2f} mm", delta_color="inverse")
+        c_b3.metric("Overrun Profile B", f"{overrun_b:.2f} mm",
+                    delta=f"{(overrun_b - overrun_a):.2f} mm", delta_color="inverse")
+        c_b4.metric("Overrun Time Profile B", f"{overrun_time_b*1000:.0f} ms",
+                    delta=f"{(overrun_time_b - overrun_time_a)*1000:.0f} ms", delta_color="inverse")
+
+        c_b5, c_b6 = st.columns(2)
+        c_b5.metric("Final Part Pos B", f"{(pos_b[-1] + d_desliza_b):.2f} mm",
+                    delta=f"{(pos_b[-1] + d_desliza_b) - (pos_a[-1] + d_desliza_a):.2f} mm", delta_color="inverse")
+        c_b6.metric("Cycle Time Profile B", f"{t_b[-1]:.2f} s",
+                    delta=f"{(t_b[-1] - t_a[-1]):.2f} s", delta_color="inverse")
 
     # ==========================================
-    # 5. ANIMACIÓN — TRACK VISUAL (AL FINAL DE LA PÁGINA)
+    # 5. ANIMACIÓN — Calidad siempre ALTA
     # ==========================================
     st.markdown("---")
     st.subheader("🎬 Animación en Tiempo Real: Recorrido de la Pieza")
-    st.caption("El riel se colorea conforme la pieza avanza. El color y la etiqueta cambian según la fase cinemática activa (aceleración, crucero, frenado).")
+    st.caption("El riel se colorea conforme la pieza avanza. El color y la etiqueta cambian según la fase cinemática activa. Calidad fijada en Alta (260 frames) para máxima fidelidad.")
 
-    ctrl1, ctrl2 = st.columns(2)
-    with ctrl1:
-        calidad = st.selectbox("Calidad de animación", ["Baja (ligera)", "Media", "Alta (detallada)"], index=1)
-    with ctrl2:
-        velocidad_reproduccion = st.select_slider("Velocidad de reproducción", options=["0.5x", "1x", "2x", "4x"], value="1x")
-
-    n_frames_map = {"Baja (ligera)": 90, "Media": 160, "Alta (detallada)": 260}
+    velocidad_reproduccion = st.select_slider("Velocidad de reproducción", options=["0.5x", "1x", "2x", "4x"], value="1x")
     speed_map = {"0.5x": 0.5, "1x": 1.0, "2x": 2.0, "4x": 4.0}
-    n_frames = n_frames_map[calidad]
     speed_mult = speed_map[velocidad_reproduccion]
+    n_frames = 260  # Calidad Alta fija
 
     STATE_INFO = {
         "ACCEL_FAST":    ("🚀", "Acelerando"),
@@ -304,7 +367,7 @@ with tab_sim:
         "DONE":          ("✅", "Detenido"),
     }
     STATE_COLOR = {
-        "ACCEL_FAST": "#2ecc71", "CRUISE_FAST": None,  # None -> usa color de carril
+        "ACCEL_FAST": "#2ecc71", "CRUISE_FAST": None,
         "DECEL_TO_SLOW": "#f39c12", "CRUISE_SLOW": "#f1c40f",
         "DECEL_TO_STOP": "#e74c3c", "DONE": "#7f8c8d",
     }
@@ -331,13 +394,11 @@ with tab_sim:
 
         fig_t = go.Figure()
 
-        # ---- Leyenda explicativa (trazos invisibles solo para leyenda) ----
         fig_t.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="#ff7f0e", dash="dot", width=2), name="Sensor Reducción"))
         fig_t.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="#d62728", dash="dash", width=2), name="Ziel (Sensor Paro)"))
         fig_t.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color="rgba(220,50,50,0.35)", size=15, symbol='square'), name="Zona Overrun / Slip"))
         fig_t.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(symbol="triangle-down", size=12, color="black"), name="Alto Real (posición final)"))
 
-        # ---- Riel de fondo y elementos estáticos por carril ----
         for idx, p in enumerate(perfiles):
             row = rows[idx]
             color = p['color']
@@ -379,7 +440,6 @@ with tab_sim:
         fig_t.add_annotation(x=0, y=1.16, xref="x", yref="paper", text="<b>Start</b>", showarrow=False, font=dict(size=12, color="gray"))
         fig_t.add_annotation(x=length, y=1.16, xref="x", yref="paper", text="<b>Ziel</b>", showarrow=False, font=dict(size=12, color="#444"))
 
-        # ---- Trazos animados (fill + marcador + texto en vivo) por carril ----
         base_traces = len(fig_t.data)
         for idx, p in enumerate(perfiles):
             row = rows[idx]
@@ -501,50 +561,55 @@ with tab_math:
     )
 
     st.subheader("1. Mechanical Elasticity Floor")
-    st.markdown(
+    st.markdown(L(
         "Industrial belt/roller conveyors exhibit mechanical compliance (chain slack, belt stretch, and chassis flex). "
-        "Even if PLC parameters define a stopping ramp near $0\\\\text{ ms}$, the physical mechanical response time "
-        "is lower bounded by $T_{\\\\text{min}} = 20.0\\\\,\\\\text{ms}$:"
-    )
-    st.latex(r"t_{\\text{stop\\_real}} = \\max\\left(t_{\\text{ramp\\_stop}}, 20.0\\,\\text{ms}\\right)")
+        "Even if PLC parameters define a stopping ramp near $0~text{ ms}$, the physical mechanical response time "
+        "is lower bounded by $T_{~text{min}} = 20.0~,~text{ms}$:"
+    ))
+    st.latex(L(r"t_{~text{stop_real}} = ~max~left(t_{~text{ramp_stop}}, 20.0~,~text{ms}~right)"))
 
     st.subheader("2. Conveyor Stop Deceleration")
-    st.markdown("When the part trips the stop sensor at creep velocity $v_{\\\\text{slow}}$, the conveyor applies a stopping deceleration $a_{\\\\text{stop}}$:")
-    st.latex(r"a_{\\text{stop}} = \\frac{v_{\\text{slow}}}{t_{\\text{stop\\_real}}}")
-    st.markdown("Expressed in dimensionless $G$ forces relative to $g = 9810\\\\,\\\\text{mm/s}^2$:")
-    st.latex(r"g_{\\text{conv}} = \\frac{a_{\\text{stop}}}{9810}")
+    st.markdown(L("When the part trips the stop sensor at creep velocity $v_{~text{slow}}$, the conveyor applies a stopping deceleration $a_{~text{stop}}$:"))
+    st.latex(L(r"a_{~text{stop}} = ~frac{v_{~text{slow}}}{t_{~text{stop_real}}}"))
+    st.markdown(L("Expressed in dimensionless $G$ forces relative to $g = 9810~,~text{mm/s}^2$:"))
+    st.latex(L(r"g_{~text{conv}} = ~frac{a_{~text{stop}}}{9810}"))
 
     st.subheader("3. Static Friction Threshold & Slip Determination")
-    st.markdown("According to Coulomb's Law of Dry Friction, the maximum shear force transmitted without slipping is:")
-    st.latex(r"F_{\\text{friction\\_max}} = \\mu \\cdot m \\cdot g")
-    st.latex(r"a_{\\text{max\\_piece}} = \\mu \\cdot g = \\mu \\cdot 9810\\,\\text{mm/s}^2")
-    st.latex(r"g_{\\text{max\\_piece}} = \\mu")
-    st.markdown(
-        "* If $g_{\\\\text{conv}} \\\\le \\\\mu$: The static friction force holds the part in place. **No slip occurs** ($\\\\Delta d = 0$).\\n"
-        "* If $g_{\\\\text{conv}} > \\\\mu$: The stopping force exceeds static friction limits. The part **slips forward by inertia**."
-    )
+    st.markdown(L("According to Coulomb's Law of Dry Friction, the maximum shear force transmitted without slipping is governed by the static friction coefficient $~mu$:"))
+    st.latex(L(r"F_{~text{friction_max}} = ~mu ~cdot m ~cdot g"))
+    st.latex(L(r"a_{~text{max_piece}} = ~mu ~cdot g = ~mu ~cdot 9810~,~text{mm/s}^2"))
+    st.latex(L(r"g_{~text{max_piece}} = ~mu"))
+    st.markdown(L(
+        "**Slip Condition Criterion:**\\n"
+        "* If $g_{~text{conv}} ~le ~mu$: the static friction force holds the part in place. **No slip occurs** ($~Delta d = 0$).\\n"
+        "* If $g_{~text{conv}} > ~mu$: the stopping force exceeds static friction limits. The part breaks traction and **slips forward by inertia**."
+    ))
 
     st.subheader("4. Relative Part Slip Estimation")
-    st.latex(r"d_{\\text{piece}} = \\frac{v_{\\text{slow}}^2}{2 \\cdot a_{\\text{max\\_piece}}}")
-    st.latex(r"d_{\\text{conveyor}} = \\frac{v_{\\text{slow}}^2}{2 \\cdot a_{\\text{stop}}}")
-    st.latex(r"\\Delta d = d_{\\text{piece}} - d_{\\text{conveyor}} = \\frac{v_{\\text{slow}}^2}{2} \\left( \\frac{1}{\\mu \\cdot g} - \\frac{1}{a_{\\text{stop}}} \\right)")
+    st.markdown(L("When slip occurs, the conveyor decelerates at $a_{~text{stop}}$, while the part decelerates at a slower rate dictated solely by dynamic friction $a_{~text{max_piece}}$."))
+    st.markdown("Stopping distance of the part under friction:")
+    st.latex(L(r"d_{~text{piece}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{max_piece}}}"))
+    st.markdown("Stopping distance of the physical conveyor belt:")
+    st.latex(L(r"d_{~text{conveyor}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{stop}}}"))
+    st.markdown(L("Net relative slippage displacement ($~Delta d$):"))
+    st.latex(L(r"~Delta d = d_{~text{piece}} - d_{~text{conveyor}} = ~frac{v_{~text{slow}}^2}{2} ~left( ~frac{1}{~mu ~cdot g} - ~frac{1}{a_{~text{stop}}} ~right)"))
 
     st.subheader("5. Safety Factor & Minimum Required Friction")
     st.markdown("A practical engineering KPI to gauge margin before slip occurs:")
-    st.latex(r"\\text{Factor de Seguridad} = \\frac{\\mu}{g_{\\text{conv}}}")
+    st.latex(L(r"~text{Factor de Seguridad} = ~frac{~mu}{g_{~text{conv}}}"))
     st.markdown(
         "* $> 1.0$: hay margen — la fricción disponible supera la fuerza de frenado.\\n"
         "* $= 1.0$: límite crítico exacto.\\n"
         "* $< 1.0$: la pieza **desliza** con la configuración actual."
     )
-    st.latex(r"\\mu_{\\text{minimo requerido}} = g_{\\text{conv}}")
+    st.latex(L(r"~mu_{~text{minimo requerido}} = g_{~text{conv}}"))
 
     st.subheader("6. Integration Engine & Kinematic Profiles")
-    st.markdown(
-        "The state machine integrates velocity and position at a step size of $\\\\Delta t = 1\\\\,\\\\text{ms}$:\\n\\n"
+    st.markdown(L(
+        "The state machine integrates velocity and position at a step size of $~Delta t = 1~,~text{ms}$:\\n\\n"
         "1. **ACCEL_FAST**: Accelerates at RAMP_ACCEL up to SPEED_AUTO_FAST.\\n"
-        "2. **CRUISE_FAST**: Maintains fast cruise speed until reaching $P_{\\\\text{reduction}} = L_{\\\\text{total}} - S_{\\\\text{distance}}$.\\n"
+        "2. **CRUISE_FAST**: Maintains fast cruise speed until reaching $P_{~text{reduction}} = L_{~text{total}} - S_{~text{distance}}$.\\n"
         "3. **DECEL_TO_SLOW**: Decelerates at RAMP_DECEL down to SPEED_AUTO_SLOW.\\n"
-        "4. **CRUISE_SLOW**: Creeps at slow speed until reaching $P_{\\\\text{stop}} = L_{\\\\text{total}}$.\\n"
-        "5. **DECEL_TO_STOP**: Final stop deceleration based on $t_{\\\\text{stop\\\\_real}}$."
-    )
+        "4. **CRUISE_SLOW**: Creeps at slow speed until reaching $P_{~text{stop}} = L_{~text{total}}$.\\n"
+        "5. **DECEL_TO_STOP**: Final stop deceleration based on $t_{~text{stop_real}}$."
+    ))
