@@ -25,7 +25,7 @@ CARRIER_ALTO_MM = 250.0
 CARRIER_LARGO_MM = 1600.0
 CARGA_ALTO_MM = 130.0
 CARGA_LARGO_MM = 1200.0
-PIEZA_MESA_ANCHO_MM = 400.0  # ancho fijo solo para visualización de la mesa
+PIEZA_MESA_ANCHO_MM = 400.0
 
 # ==========================================
 # SESSION STATE INITIALIZATION
@@ -37,7 +37,6 @@ defaults = {
     "comparar": False,
     "speed_fast_b": 450.0, "speed_slow_b": 120.0, "accel_b": 400.0, "decel_b": 300.0,
     "sensor_distance_b": 150.0, "ramp_stop_b": 0.0, "mu_b": 0.28,
-    # Mesa Giratoria (Turning Table) - mismos nombres de parámetro, unidades angulares
     "speed_fast_mesa": 45.0, "speed_slow_mesa": 10.0, "accel_mesa": 90.0, "decel_mesa": 90.0,
     "sensor_angle_mesa": 15.0, "ramp_stop_mesa": 100.0, "mu_mesa": 0.28,
     "angle_total_mesa": 90.0, "pieza_longitud_mesa": 2110.0,
@@ -95,7 +94,7 @@ st.sidebar.number_input("RAMP_DECEL MESA (°/s²)", value=st.session_state.decel
 st.sidebar.number_input("Ángulo Sensor Reducción MESA (°)", value=st.session_state.sensor_angle_mesa, step=5.0, key="sensor_angle_mesa")
 st.sidebar.number_input("RAMP_STOP MESA (ms)", value=st.session_state.ramp_stop_mesa, step=10.0, min_value=0.0, key="ramp_stop_mesa", help="Rampa de frenado angular en el sensor de paro")
 st.sidebar.number_input("Coeficiente Fricción μ MESA", value=st.session_state.mu_mesa, step=0.01, min_value=0.01, max_value=1.0, key="mu_mesa")
-st.sidebar.number_input("Ángulo Total de Giro MESA (°)", value=st.session_state.angle_total_mesa, step=15.0, key="angle_total_mesa", help="Equivalente angular de 'Largo Total Conveyor' — abierto, no limitado a 90°")
+st.sidebar.number_input("Ángulo Total de Giro MESA (°)", value=st.session_state.angle_total_mesa, step=15.0, key="angle_total_mesa", help="Equivalente angular de 'Largo Total Conveyor' — abierto")
 st.sidebar.number_input("Longitud Total de Pieza MESA (mm)", value=st.session_state.pieza_longitud_mesa, step=10.0, min_value=1.0, key="pieza_longitud_mesa", help="La pieza se posiciona centrada en el eje de giro. R_max = Longitud / 2")
 
 
@@ -265,24 +264,21 @@ def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
     T_MIN_MECANICO_MS = 20.0
     ramp_stop_real_ms = max(ramp_stop_ms, T_MIN_MECANICO_MS)
 
-    # Deceleración angular final (°/s²) y su equivalente tangencial en el radio crítico
     alpha_stop = omega_slow / (ramp_stop_real_ms / 1000.0)
     alpha_stop_rad = np.radians(alpha_stop)
-    a_tan_stop = alpha_stop_rad * r_max          # mm/s²
+    a_tan_stop = alpha_stop_rad * r_max
     g_conv_mesa = a_tan_stop / 9810.0
 
     g_max_pieza = mu
     a_max_pieza = mu * 9810.0
 
-    # Riesgo CENTRÍPETO en crucero (existe incluso a velocidad angular constante)
     omega_fast_rad = np.radians(omega_fast)
     omega_slow_rad = np.radians(omega_slow)
-    a_cent_fast = (omega_fast_rad ** 2) * r_max  # mm/s²
+    a_cent_fast = (omega_fast_rad ** 2) * r_max
     a_cent_slow = (omega_slow_rad ** 2) * r_max
     g_cent_fast = a_cent_fast / 9810.0
     g_cent_slow = a_cent_slow / 9810.0
 
-    # Validación de configuración (análogo a insufficient_distance del conveyor)
     if omega_fast > omega_slow and alpha_decel > 0:
         angle_needed_decel = (omega_fast ** 2 - omega_slow ** 2) / (2.0 * alpha_decel)
     else:
@@ -339,9 +335,7 @@ def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
     angle_overrun = theta[-1] - angle_stop
     overrun_time = max(t_fully_stopped - t_sensor_stop, 0.0)
 
-    # Deslizamiento TANGENCIAL en el frenado final (análogo directo al modelo lineal,
-    # evaluado en el punto crítico R_max)
-    v_slow_lineal = omega_slow_rad * r_max  # mm/s (velocidad lineal del punto crítico)
+    v_slow_lineal = omega_slow_rad * r_max
     se_desliza_stop = g_conv_mesa > g_max_pieza
     if se_desliza_stop:
         dist_freno_pieza = (v_slow_lineal ** 2) / (2.0 * a_max_pieza)
@@ -353,7 +347,6 @@ def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
         deslizamiento_mm_stop = 0.0
     deslizamiento_deg_stop = np.degrees(deslizamiento_mm_stop / r_max) if r_max > 0 else 0.0
 
-    # Deceleración angular equivalente de la pieza durante el slip (para animar su trayectoria)
     alpha_max_pieza_rad = (a_max_pieza / r_max) if r_max > 0 else 0.0
     alpha_max_pieza_deg = np.degrees(alpha_max_pieza_rad)
 
@@ -423,7 +416,7 @@ with tab_sim:
             f"pero la `Distancia Sensor Reducción B` solo tiene **{st.session_state.sensor_distance_b:.1f} mm**."
         )
 
-    # ---- 1. GRÁFICA DE VELOCIDAD ----
+    # ---- 1. GRÁFICA DE VELOCIDAD (LINEAL) ----
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=t_a, y=vel_a, mode='lines', name='Velocity Profile A',
                               line=dict(color='#1f77b4', width=3)))
@@ -876,6 +869,27 @@ with tab_sim:
         f"y centrípeta (presente incluso a velocidad angular constante)."
     )
 
+    # ---- NUEVA: GRÁFICA DE VELOCIDAD ANGULAR (equivalente a la del conveyor lineal) ----
+    fig_mesa_vel = go.Figure()
+    fig_mesa_vel.add_trace(go.Scatter(x=t_m, y=omega_m, mode='lines', name='Angular Velocity (Mesa)',
+                                       line=dict(color='#1f77b4', width=3)))
+
+    fig_mesa_vel.add_vline(x=t_red_m, line_width=2, line_dash="dot", line_color="#ff7f0e",
+                            annotation_text=f"Sensor Reducción Mesa · {t_red_m:.2f}s",
+                            annotation_position="top left", annotation_font_size=10, annotation_font_color="#ff7f0e")
+    fig_mesa_vel.add_vline(x=t_stop_m, line_width=2, line_dash="dash", line_color="#d62728",
+                            annotation_text=f"Sensor Paro Mesa · {t_stop_m:.2f}s",
+                            annotation_position="top right", annotation_font_size=10, annotation_font_color="#d62728")
+
+    fig_mesa_vel.update_layout(
+        title="Angular Velocity Profile (°/s) vs Time (s)",
+        xaxis_title="Time (s)", yaxis_title="Angular Velocity (°/s)",
+        height=480, template="plotly_white", hovermode="x unified",
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="center", x=0.5, font=dict(size=10)),
+        margin=dict(b=90, t=90)
+    )
+    st.plotly_chart(fig_mesa_vel, use_container_width=True)
+
     if det_m['insufficient_angle']:
         st.warning(
             f"⚠️ **Mesa — Configuración inconsistente:** `RAMP_DECEL MESA` necesita "
@@ -883,6 +897,7 @@ with tab_sim:
             f"pero `Ángulo Sensor Reducción MESA` solo tiene **{st.session_state.sensor_angle_mesa:.1f}°**."
         )
 
+    st.markdown("---")
     st.subheader("📊 Análisis de Deslizamiento — Frenado Final (Tangencial)")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Deceleración Tangencial (frenado)", f"{g_conv_m:.3f} G")
@@ -987,9 +1002,8 @@ with tab_sim:
                                   omega_slow, r_max, n_frames, speed_mult, exageracion,
                                   ancho_pieza=PIEZA_MESA_ANCHO_MM):
         frame_times = np.linspace(0, t_arr[-1], n_frames)
-        theta_table_i = np.interp(frame_times, t_arr, theta_arr)  # mesa: rígida, sin slip
+        theta_table_i = np.interp(frame_times, t_arr, theta_arr)
 
-        # Trayectoria angular de la pieza (idéntica a la mesa salvo durante el slip final)
         theta_load_i = theta_table_i.copy()
         if se_desliza:
             mask = frame_times >= t_stop
@@ -1035,36 +1049,6 @@ with tab_sim:
         fig_m.add_trace(go.Scatter(x=[0], y=[table_radius * 1.18], mode='text', text=["..."],
                                     textfont=dict(size=12, color="#333"), showlegend=False, hoverinfo='skip'))
 
-        base_traces = len(fig_m.data)
-        frames = []
-        for k, ft in enumerate(frame_times):
-            xm, ym = rect_corners(theta_table_i[k], L_pieza * 0.06, W_pieza * 1.15)
-            xp, yp = rect_corners(theta_load_visual_i[k], L_pieza, W_pieza)
-            slip_now = slip_deg_i[k]
-            is_slip_now = ft >= t_stop and slip_now > 1e-9
-            color_now = "#e74c3c" if is_slip_now else "#1f77b4"
-
-            exag_note = f" (x{exageracion:.0f})" if exageracion > 1 and slip_now > 0 else ""
-            txt = f"θ_mesa={theta_table_i[k]:.2f}° | ω={omega_arr[np.argmin(np.abs(t_arr-ft))]:.1f}°/s"
-            if is_slip_now:
-                txt = f"⚠️ DESLIZANDO — Δθ={slip_now:.4f}°{exag_note} | " + txt
-
-            frames.append(go.Frame(
-                data=[
-                    go.Scatter(x=xm, y=ym),
-                    go.Scatter(x=xp, y=yp, fillcolor=color_now),
-                    go.Scatter(x=[0], y=[table_radius * 1.18], text=[txt]),
-                ],
-                traces=[base_traces - 3, base_traces - 2, base_traces - 1] if False else [base_traces - 3 + 3 - 3, base_traces - 3 + 1, base_traces - 3 + 2],
-                name=str(k)
-            ))
-
-        # Nota: los índices de traces se corrigen abajo de forma explícita
-        fixed_frames = []
-        idx_gray = base_traces - 2
-        idx_piece = base_traces - 1
-        idx_text = base_traces  # el último trace agregado (texto) está en base_traces (0-indexed => len-1)
-        # Recalculamos índices reales:
         idx_gray = len(fig_m.data) - 3
         idx_piece = len(fig_m.data) - 2
         idx_text = len(fig_m.data) - 1
@@ -1168,36 +1152,23 @@ with tab_math:
     st.latex(L(r"R_{~text{max}} = ~frac{~text{Longitud Total de Pieza}}{2}"))
 
     st.subheader("9. Turning Table: Tangential Component (Braking)")
-    st.markdown(L("Directly analogous to the linear conveyor model, evaluated at $R_{~text{max}}$:"))
     st.latex(L(r"~alpha_{~text{stop}} = ~frac{~omega_{~text{slow}}}{t_{~text{stop~_real}}} ~quad [°/s^2]"))
     st.latex(L(r"a_{~text{tan~_stop}} = ~alpha_{~text{stop,rad}} ~cdot R_{~text{max}} ~quad [~text{mm/s}^2]"))
     st.latex(L(r"g_{~text{conv}} = ~frac{a_{~text{tan~_stop}}}{9810}"))
-    st.markdown(L("Slip criterion identical to the linear case: slip occurs if $g_{~text{conv}} > ~mu$."))
 
     st.subheader("10. Turning Table: Centripetal Component (Constant Speed Cruise)")
     st.markdown(L(
-        "**This has no equivalent in the linear conveyor model.** Even at perfectly constant angular velocity "
-        "(zero angular acceleration), any point at radius $R$ experiences a centripetal acceleration directed "
-        "toward the rotation center:"
+        "**This has no equivalent in the linear conveyor model.** Even at perfectly constant angular velocity, "
+        "any point at radius $R$ experiences a centripetal acceleration directed toward the rotation center:"
     ))
     st.latex(L(r"a_{~text{cent}} = ~omega_{~text{rad}}^2 ~cdot R_{~text{max}} ~quad [~text{mm/s}^2]"))
     st.latex(L(r"g_{~text{cent}} = ~frac{a_{~text{cent}}}{9810}"))
-    st.markdown(L(
-        "If $g_{~text{cent}} > ~mu$ at the cruise speed, the piece is at risk of sliding **radially outward** "
-        "even without any braking event — this must be checked independently at both $~omega_{~text{fast}}$ "
-        "and $~omega_{~text{slow}}$."
-    ))
 
     st.subheader("11. Scope Limitation: Free-Sliding Dynamics on a Rotating Frame")
     st.markdown(L(
         "A fully rigorous simulation of an object sliding freely on a rotating platform (once friction is "
-        "exceeded) requires solving motion in a non-inertial rotating reference frame, which introduces "
-        "Coriolis and Euler pseudo-forces and generally results in a curved (non-radial) sliding path. "
-        "This simulator intentionally simplifies that scenario:\\n\\n"
-        "* **Tangential slip during final braking** is modeled with full displacement animation, using the "
-        "same validated Coulomb-friction kinematics as the linear conveyor, evaluated at $R_{~text{max}}$.\\n"
-        "* **Centripetal risk during constant-speed cruise** is reported as a numeric stability indicator "
-        "(G-force vs. $~mu$), without animating a displacement trajectory, since a physically rigorous model "
-        "of that specific failure mode is substantially more complex and was outside the scope confirmed for "
-        "this implementation."
+        "exceeded) requires solving motion in a non-inertial rotating reference frame, introducing Coriolis "
+        "and Euler pseudo-forces. This simulator intentionally simplifies that scenario:\\n\\n"
+        "* **Tangential slip during final braking** is modeled with full displacement animation.\\n"
+        "* **Centripetal risk during constant-speed cruise** is reported as a numeric stability indicator only."
     ))
