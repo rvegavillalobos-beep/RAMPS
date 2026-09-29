@@ -21,10 +21,11 @@ st.markdown("Real time analysis of velocity profile, positioning, and inertial p
 # ==========================================
 # CONSTANTES FÍSICAS DEL CARRIER Y LA CARGA (NO CONFIGURABLES)
 # ==========================================
-CARRIER_ALTO_MM = 250.0    # 25 cm - Work Piece Carrier (va sobre las ruedas del conveyor, sin slip)
-CARRIER_LARGO_MM = 1600.0  # 160 cm
-CARGA_ALTO_MM = 130.0      # 13 cm - Pieza (sujeta solo por fricción sobre el carrier)
-CARGA_LARGO_MM = 1200.0    # 120 cm
+CARRIER_ALTO_MM = 250.0
+CARRIER_LARGO_MM = 1600.0
+CARGA_ALTO_MM = 130.0
+CARGA_LARGO_MM = 1200.0
+PIEZA_MESA_ANCHO_MM = 400.0  # ancho fijo solo para visualización de la mesa
 
 # ==========================================
 # SESSION STATE INITIALIZATION
@@ -36,6 +37,10 @@ defaults = {
     "comparar": False,
     "speed_fast_b": 450.0, "speed_slow_b": 120.0, "accel_b": 400.0, "decel_b": 300.0,
     "sensor_distance_b": 150.0, "ramp_stop_b": 0.0, "mu_b": 0.28,
+    # Mesa Giratoria (Turning Table) - mismos nombres de parámetro, unidades angulares
+    "speed_fast_mesa": 45.0, "speed_slow_mesa": 10.0, "accel_mesa": 90.0, "decel_mesa": 90.0,
+    "sensor_angle_mesa": 15.0, "ramp_stop_mesa": 100.0, "mu_mesa": 0.28,
+    "angle_total_mesa": 90.0, "pieza_longitud_mesa": 2110.0,
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -81,9 +86,21 @@ if st.session_state.comparar:
     st.sidebar.number_input("RAMP_STOP B (ms)", value=st.session_state.ramp_stop_b, step=10.0, min_value=0.0, key="ramp_stop_b")
     st.sidebar.number_input("Coeficiente Fricción μ B", value=st.session_state.mu_b, step=0.01, min_value=0.01, max_value=1.0, key="mu_b")
 
+st.sidebar.markdown("---")
+st.sidebar.header("🔄 Mesa Giratoria (Turning Table)")
+st.sidebar.number_input("SPEED_AUTO_FAST MESA (°/s)", value=st.session_state.speed_fast_mesa, step=5.0, key="speed_fast_mesa")
+st.sidebar.number_input("SPEED_AUTO_SLOW MESA (°/s)", value=st.session_state.speed_slow_mesa, step=1.0, key="speed_slow_mesa")
+st.sidebar.number_input("RAMP_ACCEL MESA (°/s²)", value=st.session_state.accel_mesa, step=10.0, key="accel_mesa")
+st.sidebar.number_input("RAMP_DECEL MESA (°/s²)", value=st.session_state.decel_mesa, step=10.0, key="decel_mesa")
+st.sidebar.number_input("Ángulo Sensor Reducción MESA (°)", value=st.session_state.sensor_angle_mesa, step=5.0, key="sensor_angle_mesa")
+st.sidebar.number_input("RAMP_STOP MESA (ms)", value=st.session_state.ramp_stop_mesa, step=10.0, min_value=0.0, key="ramp_stop_mesa", help="Rampa de frenado angular en el sensor de paro")
+st.sidebar.number_input("Coeficiente Fricción μ MESA", value=st.session_state.mu_mesa, step=0.01, min_value=0.01, max_value=1.0, key="mu_mesa")
+st.sidebar.number_input("Ángulo Total de Giro MESA (°)", value=st.session_state.angle_total_mesa, step=15.0, key="angle_total_mesa", help="Equivalente angular de 'Largo Total Conveyor' — abierto, no limitado a 90°")
+st.sidebar.number_input("Longitud Total de Pieza MESA (mm)", value=st.session_state.pieza_longitud_mesa, step=10.0, min_value=1.0, key="pieza_longitud_mesa", help="La pieza se posiciona centrada en el eje de giro. R_max = Longitud / 2")
+
 
 # ==========================================
-# REALISTIC KINEMATIC CALCULATION ENGINE
+# REALISTIC KINEMATIC CALCULATION ENGINE (CONVEYOR LINEAL)
 # ==========================================
 def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, mu):
     dt = 0.001
@@ -113,10 +130,6 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
     g_max_pieza = mu
     a_max_pieza = mu * 9810.0
 
-    # ---- VALIDACIÓN DE CONFIGURACIÓN: distancia de sensor vs rampa de decel ----
-    # Distancia física mínima necesaria para bajar de v_fast a v_slow con la
-    # rampa RAMP_DECEL configurada. Si la Distancia Sensor Reducción es menor
-    # a esto, el sistema llegará al sensor de paro SIN haber alcanzado v_slow.
     if v_fast > v_slow and decel > 0:
         dist_needed_decel = (v_fast ** 2 - v_slow ** 2) / (2.0 * decel)
     else:
@@ -126,13 +139,6 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
     for i in range(1, steps):
         t[i] = t[i - 1] + dt
 
-        # ---- CHEQUEO UNIVERSAL DEL SENSOR DE PARO (FIX) ----
-        # El sensor de paro es un evento físico de POSICIÓN: se activa apenas
-        # la posición alcanza pos_stop, sin importar en qué estado cinemático
-        # se encuentre el sistema (incluso si todavía está en DECEL_TO_SLOW
-        # porque la distancia del sensor de reducción fue insuficiente).
-        # Antes este chequeo SOLO se hacía dentro de CRUISE_SLOW, lo cual
-        # causaba que RAMP_DECEL contaminara incorrectamente el overrun.
         if state not in ("DECEL_TO_STOP", "DONE") and p >= pos_stop:
             t_sensor_stop = t[i]
             state = "DECEL_TO_STOP"
@@ -154,7 +160,7 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
                 t_reach_slow = t[i]
                 state = "CRUISE_SLOW"
         elif state == "CRUISE_SLOW":
-            pass  # el único evento relevante aquí (llegar a pos_stop) ya se cubrió arriba
+            pass
         elif state == "DECEL_TO_STOP":
             v -= a_stop_conveyor * dt
             if v <= 0:
@@ -174,9 +180,6 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
             vel = vel[:i + 1]
             break
 
-    # Si nunca se llegó a v_slow (por distancia insuficiente), t_reach_slow
-    # queda en 0.0; lo igualamos a t_sensor_stop para que la clasificación de
-    # fases en las animaciones no confunda ese tramo con CRUISE_SLOW.
     if t_reach_slow == 0.0 and t_sensor_stop > 0.0:
         t_reach_slow = t_sensor_stop
 
@@ -234,6 +237,172 @@ if st.session_state.comparar:
         st.session_state.ramp_stop_b, st.session_state.mu_b
     )
 
+
+# ==========================================
+# ANGULAR KINEMATIC CALCULATION ENGINE (MESA GIRATORIA)
+# ==========================================
+def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
+                          angle_total, angle_sensor_dist, ramp_stop_ms, mu, r_max):
+    dt = 0.001
+    t_max = 30.0
+    steps = int(t_max / dt)
+    t = np.zeros(steps)
+    theta = np.zeros(steps)
+    omega = np.zeros(steps)
+
+    th = 0.0
+    om = 0.0
+    angle_sensor_red = angle_total - angle_sensor_dist
+    angle_stop = angle_total
+    state = "ACCEL_FAST"
+
+    t_reach_fast = 0.0
+    t_sensor_red = 0.0
+    t_reach_slow = 0.0
+    t_sensor_stop = 0.0
+    t_fully_stopped = 0.0
+
+    T_MIN_MECANICO_MS = 20.0
+    ramp_stop_real_ms = max(ramp_stop_ms, T_MIN_MECANICO_MS)
+
+    # Deceleración angular final (°/s²) y su equivalente tangencial en el radio crítico
+    alpha_stop = omega_slow / (ramp_stop_real_ms / 1000.0)
+    alpha_stop_rad = np.radians(alpha_stop)
+    a_tan_stop = alpha_stop_rad * r_max          # mm/s²
+    g_conv_mesa = a_tan_stop / 9810.0
+
+    g_max_pieza = mu
+    a_max_pieza = mu * 9810.0
+
+    # Riesgo CENTRÍPETO en crucero (existe incluso a velocidad angular constante)
+    omega_fast_rad = np.radians(omega_fast)
+    omega_slow_rad = np.radians(omega_slow)
+    a_cent_fast = (omega_fast_rad ** 2) * r_max  # mm/s²
+    a_cent_slow = (omega_slow_rad ** 2) * r_max
+    g_cent_fast = a_cent_fast / 9810.0
+    g_cent_slow = a_cent_slow / 9810.0
+
+    # Validación de configuración (análogo a insufficient_distance del conveyor)
+    if omega_fast > omega_slow and alpha_decel > 0:
+        angle_needed_decel = (omega_fast ** 2 - omega_slow ** 2) / (2.0 * alpha_decel)
+    else:
+        angle_needed_decel = 0.0
+    insufficient_angle = angle_needed_decel > angle_sensor_dist
+
+    for i in range(1, steps):
+        t[i] = t[i - 1] + dt
+
+        if state not in ("DECEL_TO_STOP", "DONE") and th >= angle_stop:
+            t_sensor_stop = t[i]
+            state = "DECEL_TO_STOP"
+
+        if state == "ACCEL_FAST":
+            om += alpha_accel * dt
+            if om >= omega_fast:
+                om = omega_fast
+                t_reach_fast = t[i]
+                state = "CRUISE_FAST"
+        elif state == "CRUISE_FAST":
+            if th >= angle_sensor_red:
+                t_sensor_red = t[i]
+                state = "DECEL_TO_SLOW"
+        elif state == "DECEL_TO_SLOW":
+            om -= alpha_decel * dt
+            if om <= omega_slow:
+                om = omega_slow
+                t_reach_slow = t[i]
+                state = "CRUISE_SLOW"
+        elif state == "CRUISE_SLOW":
+            pass
+        elif state == "DECEL_TO_STOP":
+            om -= alpha_stop * dt
+            if om <= 0:
+                om = 0.0
+                t_fully_stopped = t[i]
+                state = "DONE"
+        elif state == "DONE":
+            om = 0.0
+
+        th += om * dt
+        theta[i] = th
+        omega[i] = om
+
+        if state == "DONE" and i > 50 and np.all(omega[i - 20:i] == 0):
+            t = t[:i + 1]
+            theta = theta[:i + 1]
+            omega = omega[:i + 1]
+            break
+
+    if t_reach_slow == 0.0 and t_sensor_stop > 0.0:
+        t_reach_slow = t_sensor_stop
+
+    angle_overrun = theta[-1] - angle_stop
+    overrun_time = max(t_fully_stopped - t_sensor_stop, 0.0)
+
+    # Deslizamiento TANGENCIAL en el frenado final (análogo directo al modelo lineal,
+    # evaluado en el punto crítico R_max)
+    v_slow_lineal = omega_slow_rad * r_max  # mm/s (velocidad lineal del punto crítico)
+    se_desliza_stop = g_conv_mesa > g_max_pieza
+    if se_desliza_stop:
+        dist_freno_pieza = (v_slow_lineal ** 2) / (2.0 * a_max_pieza)
+        dist_freno_mesa = (v_slow_lineal ** 2) / (2.0 * a_tan_stop) if a_tan_stop > 0 else 0.0
+        deslizamiento_mm_stop = dist_freno_pieza - dist_freno_mesa
+    else:
+        dist_freno_pieza = (v_slow_lineal ** 2) / (2.0 * a_tan_stop) if a_tan_stop > 0 else 0.0
+        dist_freno_mesa = dist_freno_pieza
+        deslizamiento_mm_stop = 0.0
+    deslizamiento_deg_stop = np.degrees(deslizamiento_mm_stop / r_max) if r_max > 0 else 0.0
+
+    # Deceleración angular equivalente de la pieza durante el slip (para animar su trayectoria)
+    alpha_max_pieza_rad = (a_max_pieza / r_max) if r_max > 0 else 0.0
+    alpha_max_pieza_deg = np.degrees(alpha_max_pieza_rad)
+
+    se_desliza_cruise_fast = g_cent_fast > mu
+    se_desliza_cruise_slow = g_cent_slow > mu
+
+    factor_seguridad_stop = (mu / g_conv_mesa) if g_conv_mesa > 0 else float('inf')
+    factor_seguridad_cruise_fast = (mu / g_cent_fast) if g_cent_fast > 0 else float('inf')
+
+    details = {
+        "ramp_stop_real_ms": ramp_stop_real_ms,
+        "alpha_stop": alpha_stop,
+        "a_tan_stop": a_tan_stop,
+        "a_max_pieza": a_max_pieza,
+        "dist_freno_pieza": dist_freno_pieza,
+        "dist_freno_mesa": dist_freno_mesa,
+        "deslizamiento_deg_stop": deslizamiento_deg_stop,
+        "alpha_max_pieza_deg": alpha_max_pieza_deg,
+        "t_reach_fast": t_reach_fast,
+        "t_reach_slow": t_reach_slow,
+        "t_fully_stopped": t_fully_stopped,
+        "angle_sensor_red": angle_sensor_red,
+        "angle_stop": angle_stop,
+        "insufficient_angle": insufficient_angle,
+        "angle_needed_decel": angle_needed_decel,
+        "g_cent_fast": g_cent_fast,
+        "g_cent_slow": g_cent_slow,
+        "se_desliza_cruise_fast": se_desliza_cruise_fast,
+        "se_desliza_cruise_slow": se_desliza_cruise_slow,
+        "factor_seguridad_stop": factor_seguridad_stop,
+        "factor_seguridad_cruise_fast": factor_seguridad_cruise_fast,
+        "v_slow_lineal": v_slow_lineal,
+    }
+
+    return (t, theta, omega, t_sensor_red, t_sensor_stop, angle_overrun, overrun_time,
+            g_conv_mesa, se_desliza_stop, deslizamiento_mm_stop, details)
+
+
+r_max_mesa = st.session_state.pieza_longitud_mesa / 2.0
+
+(t_m, theta_m, omega_m, t_red_m, t_stop_m, ang_overrun_m, overrun_time_m,
+ g_conv_m, desliza_m, d_desliza_mm_m, det_m) = calcular_perfil_mesa(
+    st.session_state.speed_fast_mesa, st.session_state.speed_slow_mesa,
+    st.session_state.accel_mesa, st.session_state.decel_mesa,
+    st.session_state.angle_total_mesa, st.session_state.sensor_angle_mesa,
+    st.session_state.ramp_stop_mesa, st.session_state.mu_mesa, r_max_mesa
+)
+
+
 tab_sim, tab_math = st.tabs(["📊 Simulation & Dashboard", "📚 Mathematical Background & Physics Engine"])
 
 # ==========================================
@@ -241,22 +410,17 @@ tab_sim, tab_math = st.tabs(["📊 Simulation & Dashboard", "📚 Mathematical B
 # ==========================================
 with tab_sim:
 
-    # ---- AVISO DE CONFIGURACIÓN: distancia de sensor insuficiente ----
     if det_a['insufficient_distance']:
         st.warning(
             f"⚠️ **Perfil A — Configuración inconsistente:** la rampa `RAMP_DECEL A` necesita "
             f"**{det_a['dist_needed_decel']:.1f} mm** para bajar de SPEED_AUTO_FAST a SPEED_AUTO_SLOW, "
-            f"pero la `Distancia Sensor Reducción A` solo tiene **{st.session_state.sensor_distance_a:.1f} mm**. "
-            f"La pieza llegará al sensor de paro sin haber alcanzado la velocidad de creep, causando un overrun "
-            f"mayor al esperado. Aumenta la distancia del sensor o reduce RAMP_DECEL / SPEED_AUTO_FAST."
+            f"pero la `Distancia Sensor Reducción A` solo tiene **{st.session_state.sensor_distance_a:.1f} mm**."
         )
     if st.session_state.comparar and det_b['insufficient_distance']:
         st.warning(
             f"⚠️ **Perfil B — Configuración inconsistente:** la rampa `RAMP_DECEL B` necesita "
             f"**{det_b['dist_needed_decel']:.1f} mm** para bajar de SPEED_AUTO_FAST a SPEED_AUTO_SLOW, "
-            f"pero la `Distancia Sensor Reducción B` solo tiene **{st.session_state.sensor_distance_b:.1f} mm**. "
-            f"La pieza llegará al sensor de paro sin haber alcanzado la velocidad de creep, causando un overrun "
-            f"mayor al esperado. Aumenta la distancia del sensor o reduce RAMP_DECEL / SPEED_AUTO_FAST."
+            f"pero la `Distancia Sensor Reducción B` solo tiene **{st.session_state.sensor_distance_b:.1f} mm**."
         )
 
     # ---- 1. GRÁFICA DE VELOCIDAD ----
@@ -302,10 +466,8 @@ with tab_sim:
     col_s1, col_s2 = st.columns(2)
     fs = det_a['factor_seguridad']
     fs_display = "∞" if fs == float('inf') else f"{fs:.2f}x"
-    col_s1.metric("🛡️ Factor de Seguridad (μ / g_conv)", fs_display,
-                  help="Si es menor a 1.0x, la pieza desliza. Mayor a 1.0x = margen de seguridad.")
-    col_s2.metric("🎯 μ mínimo requerido para NO deslizar", f"{det_a['mu_minimo_requerido']:.3f}",
-                  help="Coeficiente de fricción mínimo entre la pieza y el carrier necesario para evitar el deslizamiento con esta configuración.")
+    col_s1.metric("🛡️ Factor de Seguridad (μ / g_conv)", fs_display)
+    col_s2.metric("🎯 μ mínimo requerido para NO deslizar", f"{det_a['mu_minimo_requerido']:.3f}")
 
     expander_title = "🔍 View Calculation Step by Step Breakdown (Profile A)" if desliza_a else "ℹ️ View Stability & Deceleration Math (Profile A)"
     with st.expander(expander_title):
@@ -337,29 +499,24 @@ with tab_sim:
         st.markdown("**Step 4: Slip Decision Criteria**")
         if desliza_a:
             st.error(
-                f"🔴 **SLIP DETECTED:** g_conv ({g_conv_a:.3f} G) > μ ({st.session_state.mu_a:.2f} G). "
-                f"La fuerza de frenado del carrier supera la capacidad de fricción estática de la pieza!"
+                f"🔴 **SLIP DETECTED:** g_conv ({g_conv_a:.3f} G) > μ ({st.session_state.mu_a:.2f} G)."
             )
             st.markdown("**Step 5: Relative Slip Distance Calculation (Δd)**")
             st.latex(L(
                 f"d_{{~text{{piece}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{max~_piece}}}}}} = "
-                f"~frac{{{st.session_state.speed_slow_a:.1f}^2}}{{2 ~cdot {det_a['a_max_pieza']:.2f}}} = "
                 f"{det_a['dist_freno_pieza']:.3f}~,~text{{mm}}"
             ))
             st.latex(L(
                 f"d_{{~text{{conveyor}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{stop}}}}}} = "
-                f"~frac{{{st.session_state.speed_slow_a:.1f}^2}}{{2 ~cdot {det_a['a_stop_conveyor']:.2f}}} = "
                 f"{det_a['dist_freno_conveyor']:.3f}~,~text{{mm}}"
             ))
             st.latex(L(
-                f"~Delta d = d_{{~text{{piece}}}} - d_{{~text{{conveyor}}}} = "
-                f"{det_a['dist_freno_pieza']:.3f} - {det_a['dist_freno_conveyor']:.3f} = "
+                f"~Delta d = {det_a['dist_freno_pieza']:.3f} - {det_a['dist_freno_conveyor']:.3f} = "
                 f"~mathbf{{{d_desliza_a:.3f}~,~text{{mm}}}}"
             ))
         else:
             st.success(
-                f"🟢 **STABLE LOAD:** g_conv ({g_conv_a:.3f} G) ≤ μ ({st.session_state.mu_a:.2f} G). "
-                f"La fricción sostiene la pieza sobre el carrier sin deslizar. Relative Part Slip = **0.000 mm**."
+                f"🟢 **STABLE LOAD:** g_conv ({g_conv_a:.3f} G) ≤ μ ({st.session_state.mu_a:.2f} G)."
             )
 
     # ---- 3. Positioning & Cycle Time ----
@@ -371,26 +528,19 @@ with tab_sim:
     col7.metric("Final Part Position", f"{(pos_a[-1] + d_desliza_a):.2f} mm")
     col8.metric("Total Motion Time", f"{t_a[-1]:.2f} s")
 
-    # ---- 4. Comparación A vs B (con Delta de Overrun) ----
     if st.session_state.comparar:
         st.markdown("---")
         st.subheader("⚖️ Profile A vs Profile B Comparison")
-
         c_b1, c_b2, c_b3, c_b4 = st.columns(4)
-        c_b1.metric("Deceleration Profile B", f"{g_conv_b:.3f} G",
-                    delta=f"{(g_conv_b - g_conv_a):.3f} G", delta_color="inverse")
-        c_b2.metric("Part Slip Profile B", f"{d_desliza_b:.3f} mm",
-                    delta=f"{(d_desliza_b - d_desliza_a):.3f} mm", delta_color="inverse")
-        c_b3.metric("Overrun Profile B", f"{overrun_b:.2f} mm",
-                    delta=f"{(overrun_b - overrun_a):.2f} mm", delta_color="inverse")
-        c_b4.metric("Overrun Time Profile B", f"{overrun_time_b*1000:.0f} ms",
-                    delta=f"{(overrun_time_b - overrun_time_a)*1000:.0f} ms", delta_color="inverse")
+        c_b1.metric("Deceleration Profile B", f"{g_conv_b:.3f} G", delta=f"{(g_conv_b - g_conv_a):.3f} G", delta_color="inverse")
+        c_b2.metric("Part Slip Profile B", f"{d_desliza_b:.3f} mm", delta=f"{(d_desliza_b - d_desliza_a):.3f} mm", delta_color="inverse")
+        c_b3.metric("Overrun Profile B", f"{overrun_b:.2f} mm", delta=f"{(overrun_b - overrun_a):.2f} mm", delta_color="inverse")
+        c_b4.metric("Overrun Time Profile B", f"{overrun_time_b*1000:.0f} ms", delta=f"{(overrun_time_b - overrun_time_a)*1000:.0f} ms", delta_color="inverse")
 
         c_b5, c_b6 = st.columns(2)
         c_b5.metric("Final Part Pos B", f"{(pos_b[-1] + d_desliza_b):.2f} mm",
                     delta=f"{(pos_b[-1] + d_desliza_b) - (pos_a[-1] + d_desliza_a):.2f} mm", delta_color="inverse")
-        c_b6.metric("Cycle Time Profile B", f"{t_b[-1]:.2f} s",
-                    delta=f"{(t_b[-1] - t_a[-1]):.2f} s", delta_color="inverse")
+        c_b6.metric("Cycle Time Profile B", f"{t_b[-1]:.2f} s", delta=f"{(t_b[-1] - t_a[-1]):.2f} s", delta_color="inverse")
 
     # ==========================================
     # 5. ANIMACIÓN — Riel General (Calidad Alta fija)
@@ -448,28 +598,23 @@ with tab_sim:
         for idx, p in enumerate(perfiles):
             row = rows[idx]
             color = p['color']
-
             fig_t.add_trace(go.Scatter(x=[0, length], y=[row, row], mode='lines',
                                         line=dict(color="#e6e6e6", width=24), showlegend=False, hoverinfo='skip'))
-
             pos_sr = p['pos_sensor_red']
             fig_t.add_shape(type="line", x0=pos_sr, x1=pos_sr, y0=row - 0.32, y1=row + 0.32,
                              line=dict(color="#ff7f0e", width=2, dash="dot"))
             fig_t.add_shape(type="line", x0=length, x1=length, y0=row - 0.32, y1=row + 0.32,
                              line=dict(color="#d62728", width=2, dash="dash"))
-
             overrun_mm = p.get('overrun_mm', 0.0)
             slip_mm = p.get('slip_mm', 0.0) or 0.0
             zona_fin = length + overrun_mm + slip_mm
             if zona_fin > length:
                 fig_t.add_shape(type="rect", x0=length, x1=zona_fin, y0=row - 0.26, y1=row + 0.26,
                                  fillcolor="rgba(220,50,50,0.18)", line=dict(width=0))
-
             pos_final_real = p['pos'][-1] + slip_mm
             fig_t.add_trace(go.Scatter(x=[pos_final_real], y=[row + 0.34], mode='markers',
                                         marker=dict(symbol="triangle-down", size=11, color="black"),
                                         showlegend=False, hoverinfo='skip'))
-
             info_txt = (f"<b>{p['label']}</b><br>"
                         f"v_fast={p['v_fast']:.0f} · v_slow={p['v_slow']:.0f} mm/s<br>"
                         f"accel={p['accel']:.0f} · decel={p['decel']:.0f} mm/s²<br>"
@@ -477,7 +622,6 @@ with tab_sim:
             fig_t.add_annotation(x=0.0, y=row, xref="paper", yref="y", xanchor="left",
                                   text=info_txt, showarrow=False, align="left",
                                   font=dict(size=11, color="#333"), xshift=-18)
-
             if overrun_mm > 0:
                 fig_t.add_annotation(x=length, y=row - 0.42, xref="x", yref="y",
                                       text=f"Overrun: +{overrun_mm:.1f} mm / +{p.get('overrun_ms', 0):.0f} ms",
@@ -501,8 +645,7 @@ with tab_sim:
 
         frames = []
         for k, ft in enumerate(frame_times):
-            data_k = []
-            idx_k = []
+            data_k, idx_k = [], []
             for idx, p in enumerate(perfiles):
                 row = rows[idx]
                 pos_k, vel_k = p['pos_i'][k], p['vel_i'][k]
@@ -512,20 +655,13 @@ with tab_sim:
                 marker_color = STATE_COLOR[st_name] or p['color']
                 is_slip = (st_name == "DECEL_TO_STOP") and p.get('se_desliza', False)
                 g_val = p['g_por_fase'].get(st_name, 0.0)
-
                 txt = f"{icon} <b>{label_st}</b><br>{pos_k:.0f} mm | {vel_k:.1f} mm/s ({pct_k:.0f}%)<br>G: {g_val:.3f}"
-                if is_slip:
-                    txt += " ⚠️ SLIP"
+                if is_slip: txt += " ⚠️ SLIP"
                 txt_color = "#e74c3c" if is_slip else "#333"
-
                 fi = base_traces + idx * 3
-                data_k.append(go.Scatter(x=[0, pos_k], y=[row, row], line=dict(color=marker_color)))
-                idx_k.append(fi)
-                data_k.append(go.Scatter(x=[pos_k], y=[row], marker=dict(color=marker_color)))
-                idx_k.append(fi + 1)
-                data_k.append(go.Scatter(x=[length * 1.02], y=[row], text=[txt], textfont=dict(color=txt_color)))
-                idx_k.append(fi + 2)
-
+                data_k.append(go.Scatter(x=[0, pos_k], y=[row, row], line=dict(color=marker_color))); idx_k.append(fi)
+                data_k.append(go.Scatter(x=[pos_k], y=[row], marker=dict(color=marker_color))); idx_k.append(fi + 1)
+                data_k.append(go.Scatter(x=[length * 1.02], y=[row], text=[txt], textfont=dict(color=txt_color))); idx_k.append(fi + 2)
             frames.append(go.Frame(data=data_k, traces=idx_k, name=str(k)))
 
         fig_t.frames = frames
@@ -533,61 +669,41 @@ with tab_sim:
         frame_ms = max((target_total_ms / n_frames) / speed_mult, 8.0)
 
         fig_t.update_layout(
-            height=200 + n_lanes * 190,
-            template="plotly_white",
+            height=200 + n_lanes * 190, template="plotly_white",
             xaxis=dict(title="Posición (mm)", range=[-length * 0.02, x_max]),
             yaxis=dict(visible=False, range=[-0.7, max(rows) + 0.7]),
             margin=dict(l=230, t=70, b=60, r=40),
             legend=dict(orientation="h", y=-0.18, x=0.5, xanchor="center", font=dict(size=10)),
-            updatemenus=[dict(
-                type="buttons", showactive=False, y=1.22, x=0.0, xanchor="left",
-                buttons=[
-                    dict(label="▶ Play", method="animate",
-                         args=[None, dict(frame=dict(duration=frame_ms, redraw=False),
-                                           fromcurrent=True, transition=dict(duration=0), mode="immediate")]),
-                    dict(label="⏸ Pause", method="animate",
-                         args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])
-                ]
-            )],
-            sliders=[dict(
-                steps=[dict(method="animate", args=[[str(k)],
-                            dict(mode="immediate", frame=dict(duration=0, redraw=False))],
-                            label=f"{frame_times[k]:.1f}s") for k in range(n_frames)],
-                x=0.0, len=0.96, y=-0.32
-            )]
+            updatemenus=[dict(type="buttons", showactive=False, y=1.22, x=0.0, xanchor="left",
+                buttons=[dict(label="▶ Play", method="animate",
+                              args=[None, dict(frame=dict(duration=frame_ms, redraw=False), fromcurrent=True, transition=dict(duration=0), mode="immediate")]),
+                         dict(label="⏸ Pause", method="animate",
+                              args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])])],
+            sliders=[dict(steps=[dict(method="animate", args=[[str(k)], dict(mode="immediate", frame=dict(duration=0, redraw=False))], label=f"{frame_times[k]:.1f}s") for k in range(n_frames)],
+                          x=0.0, len=0.96, y=-0.32)]
         )
         return fig_t
 
     def g_por_fase(accel, decel, g_conv):
-        return {
-            "ACCEL_FAST": accel / 9810.0,
-            "CRUISE_FAST": 0.0,
-            "DECEL_TO_SLOW": decel / 9810.0,
-            "CRUISE_SLOW": 0.0,
-            "DECEL_TO_STOP": g_conv,
-            "DONE": 0.0,
-        }
+        return {"ACCEL_FAST": accel / 9810.0, "CRUISE_FAST": 0.0, "DECEL_TO_SLOW": decel / 9810.0,
+                "CRUISE_SLOW": 0.0, "DECEL_TO_STOP": g_conv, "DONE": 0.0}
 
     perfiles_animacion = [{
-        "label": "Perfil A", "color": "#1f77b4",
-        "t": t_a, "pos": pos_a, "vel": vel_a,
+        "label": "Perfil A", "color": "#1f77b4", "t": t_a, "pos": pos_a, "vel": vel_a,
         "v_fast": st.session_state.speed_fast_a, "v_slow": st.session_state.speed_slow_a,
         "accel": st.session_state.accel_a, "decel": st.session_state.decel_a, "mu": st.session_state.mu_a,
-        "pos_sensor_red": det_a['pos_sensor_red'],
-        "t_reach_fast": det_a['t_reach_fast'], "t_red": t_red_a, "t_reach_slow": det_a['t_reach_slow'],
-        "t_stop": t_stop_a, "t_full": det_a['t_fully_stopped'],
+        "pos_sensor_red": det_a['pos_sensor_red'], "t_reach_fast": det_a['t_reach_fast'], "t_red": t_red_a,
+        "t_reach_slow": det_a['t_reach_slow'], "t_stop": t_stop_a, "t_full": det_a['t_fully_stopped'],
         "overrun_mm": overrun_a, "overrun_ms": overrun_time_a * 1000, "slip_mm": d_desliza_a,
         "se_desliza": desliza_a, "g_por_fase": g_por_fase(st.session_state.accel_a, st.session_state.decel_a, g_conv_a),
     }]
     if st.session_state.comparar:
         perfiles_animacion.append({
-            "label": "Perfil B", "color": "#d62728",
-            "t": t_b, "pos": pos_b, "vel": vel_b,
+            "label": "Perfil B", "color": "#d62728", "t": t_b, "pos": pos_b, "vel": vel_b,
             "v_fast": st.session_state.speed_fast_b, "v_slow": st.session_state.speed_slow_b,
             "accel": st.session_state.accel_b, "decel": st.session_state.decel_b, "mu": st.session_state.mu_b,
-            "pos_sensor_red": det_b['pos_sensor_red'],
-            "t_reach_fast": det_b['t_reach_fast'], "t_red": t_red_b, "t_reach_slow": det_b['t_reach_slow'],
-            "t_stop": t_stop_b, "t_full": det_b['t_fully_stopped'],
+            "pos_sensor_red": det_b['pos_sensor_red'], "t_reach_fast": det_b['t_reach_fast'], "t_red": t_red_b,
+            "t_reach_slow": det_b['t_reach_slow'], "t_stop": t_stop_b, "t_full": det_b['t_fully_stopped'],
             "overrun_mm": overrun_b, "overrun_ms": overrun_time_b * 1000, "slip_mm": d_desliza_b,
             "se_desliza": desliza_b, "g_por_fase": g_por_fase(st.session_state.accel_b, st.session_state.decel_b, g_conv_b),
         })
@@ -596,27 +712,19 @@ with tab_sim:
     st.plotly_chart(fig_track, use_container_width=True)
 
     # ==========================================
-    # 6. WORK PIECE CARRIER + CARGA (EJE FIJO — SIN CÁMARA MÓVIL)
+    # 6. WORK PIECE CARRIER + CARGA (EJE FIJO)
     # ==========================================
     st.markdown("---")
     st.subheader("🔬 Work Piece Carrier & Carga: Deslizamiento en Vivo")
-    st.caption(
-        f"El Carrier (160 × 25 cm, gris) va rígidamente sobre las ruedas del conveyor — nunca desliza. "
-        f"La Carga (120 × 13 cm, color) va encima sujeta solo por fricción. Ambos viajan juntos. "
-        f"El eje, el grid y las líneas de sensores son fijos: el único elemento que se mueve es el conjunto Carrier + Carga."
-    )
+    st.caption("El Carrier (160×25 cm, gris) va rígidamente sobre las ruedas del conveyor — nunca desliza. "
+               "La Carga (120×13 cm, color) va encima sujeta solo por fricción.")
 
     col_ctrl1, col_ctrl2 = st.columns(2)
     with col_ctrl1:
         velocidad_carrier = st.select_slider("Velocidad de reproducción", options=["0.5x", "1x", "2x", "4x"], value="1x", key="vel_carrier")
     with col_ctrl2:
-        exageracion_txt = st.select_slider(
-            "Exageración visual del deslizamiento",
-            options=["1x (real)", "5x", "10x", "25x", "50x"], value="10x", key="exag_slip",
-            help="El deslizamiento real entre carrier y carga suele ser de fracciones de milímetro, "
-                 "invisible a escala real. Este control amplifica SOLO el desplazamiento relativo para "
-                 "poder verlo — el valor numérico mostrado siempre es el real, nunca el exagerado."
-        )
+        exageracion_txt = st.select_slider("Exageración visual del deslizamiento",
+            options=["1x (real)", "5x", "10x", "25x", "50x"], value="10x", key="exag_slip")
     speed_mult_carrier = speed_map[velocidad_carrier]
     exag_map = {"1x (real)": 1.0, "5x": 5.0, "10x": 10.0, "25x": 25.0, "50x": 50.0}
     exageracion = exag_map[exageracion_txt]
@@ -626,7 +734,6 @@ with tab_sim:
                                 carrier_alto=CARRIER_ALTO_MM, carrier_largo=CARRIER_LARGO_MM,
                                 carga_alto=CARGA_ALTO_MM, carga_largo=CARGA_LARGO_MM):
         margin = (carrier_largo - carga_largo) / 2.0
-
         for p in perfiles:
             if p['se_desliza']:
                 p['t_load_stop'] = p['t_stop'] + (p['v_slow'] / p['a_max_pieza'] if p['a_max_pieza'] > 0 else 0.0)
@@ -638,7 +745,7 @@ with tab_sim:
         frame_times = np.linspace(t_start, t_end, n_frames)
 
         for p in perfiles:
-            carrier_pos_i = np.interp(frame_times, p['t'], p['pos'])  # rígido: sigue al conveyor siempre
+            carrier_pos_i = np.interp(frame_times, p['t'], p['pos'])
             if p['se_desliza']:
                 load_pos_i = carrier_pos_i.copy()
                 mask = frame_times >= p['t_stop']
@@ -649,8 +756,7 @@ with tab_sim:
                 seg = np.where(dt <= t_full_load, seg, pos_load_final)
                 load_pos_i[mask] = seg
             else:
-                load_pos_i = carrier_pos_i.copy()  # se mueve exactamente igual, slip = 0 siempre
-
+                load_pos_i = carrier_pos_i.copy()
             p['carrier_pos_i'] = carrier_pos_i
             p['load_pos_i'] = load_pos_i
             p['slip_i'] = np.maximum(load_pos_i - carrier_pos_i, 0.0)
@@ -669,7 +775,6 @@ with tab_sim:
         x_max_fixed = right_bound + pad
 
         fig_c = go.Figure()
-
         fig_c.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="#ff7f0e", dash="dot", width=2), name="Sensor Reducción"))
         fig_c.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="#d62728", dash="dash", width=2), name="Ziel (Sensor Paro)"))
         fig_c.add_trace(go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color="#95a5a6", size=15, symbol='square', line=dict(color='black', width=1)), name="Work Piece Carrier (sin slip)"))
@@ -677,43 +782,28 @@ with tab_sim:
 
         for p in perfiles:
             y0c = p['y_off']
-            fig_c.add_shape(type="line", x0=x_min_fixed, x1=x_max_fixed, y0=y0c, y1=y0c,
-                             line=dict(color="#bbbbbb", width=2))
-            fig_c.add_shape(type="line", x0=p['pos_sensor_red'], x1=p['pos_sensor_red'],
-                             y0=y0c - 40, y1=y0c + carrier_alto + carga_alto + 60,
-                             line=dict(color="#ff7f0e", width=2, dash="dot"))
-            fig_c.add_shape(type="line", x0=length, x1=length,
-                             y0=y0c - 40, y1=y0c + carrier_alto + carga_alto + 60,
-                             line=dict(color="#d62728", width=2, dash="dash"))
-
-            info_txt = (f"<b>{p['label']}</b><br>"
-                        f"v_slow={p['v_slow']:.0f} mm/s · μ={p['mu']:.2f}<br>"
-                        f"Slip máx real: {p['slip_i'].max():.3f} mm")
-            fig_c.add_annotation(x=0.0, y=y0c + (carrier_alto + carga_alto) / 2, xref="paper", yref="y",
-                                  xanchor="left", text=info_txt, showarrow=False, align="left",
-                                  font=dict(size=11, color="#333"), xshift=-18)
+            fig_c.add_shape(type="line", x0=x_min_fixed, x1=x_max_fixed, y0=y0c, y1=y0c, line=dict(color="#bbbbbb", width=2))
+            fig_c.add_shape(type="line", x0=p['pos_sensor_red'], x1=p['pos_sensor_red'], y0=y0c - 40, y1=y0c + carrier_alto + carga_alto + 60, line=dict(color="#ff7f0e", width=2, dash="dot"))
+            fig_c.add_shape(type="line", x0=length, x1=length, y0=y0c - 40, y1=y0c + carrier_alto + carga_alto + 60, line=dict(color="#d62728", width=2, dash="dash"))
+            info_txt = (f"<b>{p['label']}</b><br>v_slow={p['v_slow']:.0f} mm/s · μ={p['mu']:.2f}<br>Slip máx real: {p['slip_i'].max():.3f} mm")
+            fig_c.add_annotation(x=0.0, y=y0c + (carrier_alto + carga_alto) / 2, xref="paper", yref="y", xanchor="left",
+                                  text=info_txt, showarrow=False, align="left", font=dict(size=11, color="#333"), xshift=-18)
 
         base_traces = len(fig_c.data)
         for p in perfiles:
             y0c = p['y_off']
             cf0 = p['carrier_pos_i'][0]
             lf0 = p['lf_i'][0]
-            fig_c.add_trace(go.Scatter(
-                x=[cf0 - carrier_largo, cf0, cf0, cf0 - carrier_largo, cf0 - carrier_largo],
-                y=[y0c, y0c, y0c + carrier_alto, y0c + carrier_alto, y0c],
-                mode='lines', fill='toself', fillcolor="#95a5a6",
-                line=dict(color='black', width=2), showlegend=False, hoverinfo='skip'
-            ))
-            fig_c.add_trace(go.Scatter(
-                x=[lf0 - carga_largo, lf0, lf0, lf0 - carga_largo, lf0 - carga_largo],
-                y=[y0c + carrier_alto, y0c + carrier_alto, y0c + carrier_alto + carga_alto,
-                   y0c + carrier_alto + carga_alto, y0c + carrier_alto],
-                mode='lines', fill='toself', fillcolor=p['color'],
-                line=dict(color='black', width=2), showlegend=False, hoverinfo='skip'
-            ))
+            fig_c.add_trace(go.Scatter(x=[cf0 - carrier_largo, cf0, cf0, cf0 - carrier_largo, cf0 - carrier_largo],
+                                        y=[y0c, y0c, y0c + carrier_alto, y0c + carrier_alto, y0c],
+                                        mode='lines', fill='toself', fillcolor="#95a5a6",
+                                        line=dict(color='black', width=2), showlegend=False, hoverinfo='skip'))
+            fig_c.add_trace(go.Scatter(x=[lf0 - carga_largo, lf0, lf0, lf0 - carga_largo, lf0 - carga_largo],
+                                        y=[y0c + carrier_alto, y0c + carrier_alto, y0c + carrier_alto + carga_alto, y0c + carrier_alto + carga_alto, y0c + carrier_alto],
+                                        mode='lines', fill='toself', fillcolor=p['color'],
+                                        line=dict(color='black', width=2), showlegend=False, hoverinfo='skip'))
             fig_c.add_trace(go.Scatter(x=[cf0], y=[y0c + carrier_alto + carga_alto + 35], mode='text',
-                                        text=["..."], textfont=dict(size=11, color="#333"),
-                                        showlegend=False, hoverinfo='skip'))
+                                        text=["..."], textfont=dict(size=11, color="#333"), showlegend=False, hoverinfo='skip'))
 
         frames = []
         for k, ft in enumerate(frame_times):
@@ -725,29 +815,17 @@ with tab_sim:
                 slip_now = p['slip_i'][k]
                 is_slip_now = ft >= p['t_stop'] and slip_now > 1e-6
                 load_color = "#e74c3c" if is_slip_now else p['color']
-
                 fi = base_traces + pi * 3
-                data_k.append(go.Scatter(
-                    x=[cf - carrier_largo, cf, cf, cf - carrier_largo, cf - carrier_largo],
-                    y=[y0c, y0c, y0c + carrier_alto, y0c + carrier_alto, y0c]
-                ))
-                idx_k.append(fi)
-                data_k.append(go.Scatter(
-                    x=[lf - carga_largo, lf, lf, lf - carga_largo, lf - carga_largo],
-                    y=[y0c + carrier_alto, y0c + carrier_alto, y0c + carrier_alto + carga_alto,
-                       y0c + carrier_alto + carga_alto, y0c + carrier_alto],
-                    fillcolor=load_color
-                ))
-                idx_k.append(fi + 1)
-
+                data_k.append(go.Scatter(x=[cf - carrier_largo, cf, cf, cf - carrier_largo, cf - carrier_largo],
+                                          y=[y0c, y0c, y0c + carrier_alto, y0c + carrier_alto, y0c])); idx_k.append(fi)
+                data_k.append(go.Scatter(x=[lf - carga_largo, lf, lf, lf - carga_largo, lf - carga_largo],
+                                          y=[y0c + carrier_alto, y0c + carrier_alto, y0c + carrier_alto + carga_alto, y0c + carrier_alto + carga_alto, y0c + carrier_alto],
+                                          fillcolor=load_color)); idx_k.append(fi + 1)
                 exag_note = f" (mostrado a {exageracion:.0f}x)" if exageracion > 1 and slip_now > 0 else ""
                 txt = f"Carrier: {cf:.0f} mm | Slip real: {slip_now:.3f} mm ({slip_now*1000:.0f} µm){exag_note}"
-                if is_slip_now:
-                    txt = "⚠️ DESLIZANDO — " + txt
-                data_k.append(go.Scatter(x=[cf], y=[y0c + carrier_alto + carga_alto + 35],
-                                          text=[txt], textfont=dict(color="#e74c3c" if is_slip_now else "#333")))
-                idx_k.append(fi + 2)
-
+                if is_slip_now: txt = "⚠️ DESLIZANDO — " + txt
+                data_k.append(go.Scatter(x=[cf], y=[y0c + carrier_alto + carga_alto + 35], text=[txt],
+                                          textfont=dict(color="#e74c3c" if is_slip_now else "#333"))); idx_k.append(fi + 2)
             frames.append(go.Frame(data=data_k, traces=idx_k, name=str(k)))
 
         fig_c.frames = frames
@@ -755,54 +833,286 @@ with tab_sim:
         frame_ms = max((target_total_ms / n_frames) / speed_mult, 8.0)
 
         fig_c.update_layout(
-            height=180 + n_lanes * (carrier_alto / 2 + carga_alto + 240),
-            template="plotly_white",
+            height=180 + n_lanes * (carrier_alto / 2 + carga_alto + 240), template="plotly_white",
             xaxis=dict(title="Posición (mm) — eje fijo", range=[x_min_fixed, x_max_fixed]),
             yaxis=dict(visible=False, range=[-60, n_lanes * lane_height + 60]),
             margin=dict(l=200, t=70, b=60, r=40),
             legend=dict(orientation="h", y=-0.15, x=0.5, xanchor="center", font=dict(size=10)),
-            updatemenus=[dict(
-                type="buttons", showactive=False, y=1.15, x=0.0, xanchor="left",
-                buttons=[
-                    dict(label="▶ Play", method="animate",
-                         args=[None, dict(frame=dict(duration=frame_ms, redraw=False),
-                                           fromcurrent=True, transition=dict(duration=0), mode="immediate")]),
-                    dict(label="⏸ Pause", method="animate",
-                         args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])
-                ]
-            )],
-            sliders=[dict(
-                steps=[dict(method="animate", args=[[str(k)],
-                            dict(mode="immediate", frame=dict(duration=0, redraw=False))],
-                            label=f"{frame_times[k]:.2f}s") for k in range(n_frames)],
-                x=0.0, len=0.96, y=-0.30
-            )]
+            updatemenus=[dict(type="buttons", showactive=False, y=1.15, x=0.0, xanchor="left",
+                buttons=[dict(label="▶ Play", method="animate",
+                              args=[None, dict(frame=dict(duration=frame_ms, redraw=False), fromcurrent=True, transition=dict(duration=0), mode="immediate")]),
+                         dict(label="⏸ Pause", method="animate",
+                              args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])])],
+            sliders=[dict(steps=[dict(method="animate", args=[[str(k)], dict(mode="immediate", frame=dict(duration=0, redraw=False))], label=f"{frame_times[k]:.2f}s") for k in range(n_frames)],
+                          x=0.0, len=0.96, y=-0.30)]
         )
         return fig_c
 
     perfiles_carrier = [{
-        "label": "Perfil A", "color": "#1f77b4",
-        "t": t_a, "pos": pos_a,
-        "v_slow": st.session_state.speed_slow_a, "mu": st.session_state.mu_a,
-        "a_max_pieza": det_a['a_max_pieza'],
-        "se_desliza": desliza_a, "dist_freno_pieza": det_a['dist_freno_pieza'],
-        "t_stop": t_stop_a, "t_red": t_red_a, "pos_sensor_red": det_a['pos_sensor_red'],
-        "t_full": det_a['t_fully_stopped'],
+        "label": "Perfil A", "color": "#1f77b4", "t": t_a, "pos": pos_a,
+        "v_slow": st.session_state.speed_slow_a, "mu": st.session_state.mu_a, "a_max_pieza": det_a['a_max_pieza'],
+        "se_desliza": desliza_a, "dist_freno_pieza": det_a['dist_freno_pieza'], "t_stop": t_stop_a, "t_red": t_red_a,
+        "pos_sensor_red": det_a['pos_sensor_red'], "t_full": det_a['t_fully_stopped'],
     }]
     if st.session_state.comparar:
         perfiles_carrier.append({
-            "label": "Perfil B", "color": "#d62728",
-            "t": t_b, "pos": pos_b,
-            "v_slow": st.session_state.speed_slow_b, "mu": st.session_state.mu_b,
-            "a_max_pieza": det_b['a_max_pieza'],
-            "se_desliza": desliza_b, "dist_freno_pieza": det_b['dist_freno_pieza'],
-            "t_stop": t_stop_b, "t_red": t_red_b, "pos_sensor_red": det_b['pos_sensor_red'],
-            "t_full": det_b['t_fully_stopped'],
+            "label": "Perfil B", "color": "#d62728", "t": t_b, "pos": pos_b,
+            "v_slow": st.session_state.speed_slow_b, "mu": st.session_state.mu_b, "a_max_pieza": det_b['a_max_pieza'],
+            "se_desliza": desliza_b, "dist_freno_pieza": det_b['dist_freno_pieza'], "t_stop": t_stop_b, "t_red": t_red_b,
+            "pos_sensor_red": det_b['pos_sensor_red'], "t_full": det_b['t_fully_stopped'],
         })
 
-    fig_carrier = construir_carrier_load(perfiles_carrier, st.session_state.conveyor_length,
-                                          n_frames_carrier, speed_mult_carrier, exageracion)
+    fig_carrier = construir_carrier_load(perfiles_carrier, st.session_state.conveyor_length, n_frames_carrier, speed_mult_carrier, exageracion)
     st.plotly_chart(fig_carrier, use_container_width=True)
+
+    # ==========================================
+    # 7. MESA GIRATORIA (TURNING TABLE)
+    # ==========================================
+    st.markdown("---")
+    st.header("🔄 Mesa Giratoria (Turning Table)")
+    st.caption(
+        f"Pieza centrada en el eje de giro. R_max = Longitud/2 = {r_max_mesa:.1f} mm. "
+        f"A diferencia del conveyor lineal, aquí existen DOS componentes de fuerza: tangencial (al frenar/acelerar) "
+        f"y centrípeta (presente incluso a velocidad angular constante)."
+    )
+
+    if det_m['insufficient_angle']:
+        st.warning(
+            f"⚠️ **Mesa — Configuración inconsistente:** `RAMP_DECEL MESA` necesita "
+            f"**{det_m['angle_needed_decel']:.1f}°** para bajar de SPEED_AUTO_FAST a SPEED_AUTO_SLOW, "
+            f"pero `Ángulo Sensor Reducción MESA` solo tiene **{st.session_state.sensor_angle_mesa:.1f}°**."
+        )
+
+    st.subheader("📊 Análisis de Deslizamiento — Frenado Final (Tangencial)")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Deceleración Tangencial (frenado)", f"{g_conv_m:.3f} G")
+    m2.metric("Límite de Fricción (μ)", f"{st.session_state.mu_mesa:.2f} G")
+    m3.metric("Estabilidad al Frenar", "🔴 SLIPPING" if desliza_m else "🟢 STABLE")
+    m4.metric("Deslizamiento Relativo", f"{det_m['deslizamiento_deg_stop']:.4f}° ({d_desliza_mm_m:.3f} mm)" if desliza_m else "0.0000°")
+
+    fs_m = det_m['factor_seguridad_stop']
+    fs_m_display = "∞" if fs_m == float('inf') else f"{fs_m:.2f}x"
+    st.metric("🛡️ Factor de Seguridad al Frenar (μ / g_tan)", fs_m_display)
+
+    st.subheader("🌀 Análisis de Riesgo Centrípeto — En Crucero (Velocidad Constante)")
+    st.caption(
+        "Este riesgo existe SIEMPRE que la mesa gira a velocidad constante, sin necesidad de frenar. "
+        "No tiene equivalente en el conveyor lineal."
+    )
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    mc1.metric("G Centrípeta @ Velocidad Rápida", f"{det_m['g_cent_fast']:.3f} G",
+               help="a_cent = ω² · R_max, evaluado a SPEED_AUTO_FAST MESA")
+    mc2.metric("Estabilidad @ Rápida", "🔴 RIESGO" if det_m['se_desliza_cruise_fast'] else "🟢 OK")
+    mc3.metric("G Centrípeta @ Velocidad Lenta", f"{det_m['g_cent_slow']:.3f} G")
+    mc4.metric("Estabilidad @ Lenta", "🔴 RIESGO" if det_m['se_desliza_cruise_slow'] else "🟢 OK")
+
+    if det_m['se_desliza_cruise_fast'] or det_m['se_desliza_cruise_slow']:
+        st.error(
+            "🔴 **Riesgo de deslizamiento en crucero detectado.** La fuerza centrípeta a esta velocidad angular "
+            "y radio supera la fricción disponible — la pieza podría deslizarse hacia afuera incluso sin frenar. "
+            "Reduce la velocidad de crucero, el radio de la pieza, o incrementa μ (ej. superficie antideslizante)."
+        )
+    else:
+        st.success("🟢 La fuerza centrípeta en ambas velocidades de crucero está dentro del límite de fricción.")
+
+    with st.expander("🔍 Ver Desglose de Cálculo — Mesa Giratoria"):
+        st.markdown("### 🧮 Memoria de Cálculo (Valores Simulados)")
+
+        st.markdown("**Paso 1: Tiempo de Rampa de Paro Efectivo**")
+        st.latex(L(
+            f"t_{{~text{{stop~_real}}}} = ~max({st.session_state.ramp_stop_mesa:.1f}~,~text{{ms}}, 20.0~,~text{{ms}}) "
+            f"= {det_m['ramp_stop_real_ms']:.1f}~,~text{{ms}}"
+        ))
+
+        st.markdown("**Paso 2: Deceleración Angular Final y su Componente Tangencial en R_max**")
+        st.latex(L(
+            f"~alpha_{{~text{{stop}}}} = ~frac{{{st.session_state.speed_slow_mesa:.1f}~,°/s}}"
+            f"{{{det_m['ramp_stop_real_ms']/1000.0:.3f}~,s}} = {det_m['alpha_stop']:.2f}~,°/s^2"
+        ))
+        st.latex(L(
+            f"a_{{~text{{tan~_stop}}}} = ~alpha_{{~text{{stop}}}} ~cdot R_{{~text{{max}}}} "
+            f"= {det_m['alpha_stop']:.2f} ~cdot {r_max_mesa:.1f}~,~text{{mm}} ~text{{(convertido a rad)}} "
+            f"= {det_m['a_tan_stop']:.2f}~,~text{{mm/s}}^2"
+        ))
+        st.latex(L(
+            f"g_{{~text{{conv}}}} = ~frac{{{det_m['a_tan_stop']:.2f}}}{{9810}} = ~mathbf{{{g_conv_m:.3f}~,G}}"
+        ))
+
+        st.markdown("**Paso 3: Componente Centrípeta en Crucero**")
+        st.latex(L(
+            f"a_{{~text{{cent}}}} = ~omega^2 ~cdot R_{{~text{{max}}}} ~quad ~text{{(en radianes)}}"
+        ))
+        st.latex(L(
+            f"g_{{~text{{cent,fast}}}} = ~mathbf{{{det_m['g_cent_fast']:.3f}~,G}} ~quad "
+            f"g_{{~text{{cent,slow}}}} = ~mathbf{{{det_m['g_cent_slow']:.3f}~,G}}"
+        ))
+
+        st.markdown("**Paso 4: Criterio de Deslizamiento al Frenar**")
+        if desliza_m:
+            st.error(f"🔴 **SLIP AL FRENAR:** g_conv ({g_conv_m:.3f} G) > μ ({st.session_state.mu_mesa:.2f} G)")
+            st.latex(L(
+                f"~Delta~theta = ~frac{{~Delta d}}{{R_{{~text{{max}}}}}} ~cdot ~frac{{180}}{{~pi}} "
+                f"= ~mathbf{{{det_m['deslizamiento_deg_stop']:.4f}°}}"
+            ))
+        else:
+            st.success(f"🟢 **ESTABLE AL FRENAR:** g_conv ({g_conv_m:.3f} G) ≤ μ ({st.session_state.mu_mesa:.2f} G)")
+
+    st.markdown("---")
+    st.subheader("🎯 Posicionamiento y Tiempo de Ciclo — Mesa")
+    mp1, mp2, mp3, mp4 = st.columns(4)
+    mp1.metric("Overrun Angular", f"{ang_overrun_m:.3f}°")
+    mp2.metric("Overrun Time", f"{overrun_time_m*1000:.0f} ms")
+    mp3.metric("Posición Final Pieza", f"{(theta_m[-1] + det_m['deslizamiento_deg_stop']):.3f}°")
+    mp4.metric("Tiempo Total de Ciclo", f"{t_m[-1]:.2f} s")
+
+    st.markdown("---")
+    st.subheader("🎬 Animación: Vista Superior de la Mesa Girando")
+    st.caption(
+        "Vista desde arriba. El rectángulo gris representa la mesa/carrier girando (sin slip). "
+        "La pieza (color) se muestra centrada; se pone roja durante el frenado final si desliza tangencialmente "
+        "(desplazamiento angular exagerado para visibilidad — el riesgo centrípeto en crucero se reporta arriba "
+        "como indicador numérico, no se anima por la complejidad de modelar deslizamiento libre en un marco giratorio)."
+    )
+
+    vel_mesa_anim = st.select_slider("Velocidad de reproducción (Mesa)", options=["0.5x", "1x", "2x", "4x"], value="1x", key="vel_mesa")
+    exag_mesa_txt = st.select_slider("Exageración visual del deslizamiento angular",
+                                      options=["1x (real)", "10x", "50x", "200x"], value="50x", key="exag_mesa")
+    speed_mult_mesa = speed_map[vel_mesa_anim]
+    exag_mesa_map = {"1x (real)": 1.0, "10x": 10.0, "50x": 50.0, "200x": 200.0}
+    exag_mesa = exag_mesa_map[exag_mesa_txt]
+    n_frames_mesa = 220
+
+    def construir_mesa_animacion(t_arr, theta_arr, omega_arr, t_stop, t_full, angle_stop,
+                                  se_desliza, deslizamiento_deg, alpha_max_pieza_deg,
+                                  omega_slow, r_max, n_frames, speed_mult, exageracion,
+                                  ancho_pieza=PIEZA_MESA_ANCHO_MM):
+        frame_times = np.linspace(0, t_arr[-1], n_frames)
+        theta_table_i = np.interp(frame_times, t_arr, theta_arr)  # mesa: rígida, sin slip
+
+        # Trayectoria angular de la pieza (idéntica a la mesa salvo durante el slip final)
+        theta_load_i = theta_table_i.copy()
+        if se_desliza:
+            mask = frame_times >= t_stop
+            dtl = frame_times[mask] - t_stop
+            t_full_load = omega_slow / alpha_max_pieza_deg if alpha_max_pieza_deg > 0 else 0.0
+            seg = angle_stop + omega_slow * dtl - 0.5 * alpha_max_pieza_deg * dtl ** 2
+            theta_final_load = angle_stop + deslizamiento_deg
+            seg = np.where(dtl <= t_full_load, seg, theta_final_load)
+            theta_load_i[mask] = seg
+
+        slip_deg_i = np.maximum(theta_load_i - theta_table_i, 0.0)
+        theta_load_visual_i = theta_table_i + slip_deg_i * exageracion
+
+        table_radius = r_max * 1.25
+        L_pieza = r_max * 2.0
+        W_pieza = ancho_pieza
+
+        def rect_corners(theta_deg, largo, ancho):
+            th_rad = np.radians(theta_deg)
+            hl, hw = largo / 2.0, ancho / 2.0
+            local = np.array([[-hl, -hw], [hl, -hw], [hl, hw], [-hl, hw], [-hl, -hw]])
+            c, s = np.cos(th_rad), np.sin(th_rad)
+            rot = np.array([[c, -s], [s, c]])
+            rotated = local @ rot.T
+            return rotated[:, 0], rotated[:, 1]
+
+        fig_m = go.Figure()
+
+        fig_m.add_shape(type="circle", x0=-table_radius, x1=table_radius, y0=-table_radius, y1=table_radius,
+                         line=dict(color="#999999", width=2), fillcolor="rgba(230,230,230,0.4)")
+
+        fig_m.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="#95a5a6", width=3), name="Mesa (rígida, sin slip)"))
+        fig_m.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color="rgba(220,50,50,0.8)", width=3), name="Pieza deslizando (slip activo)"))
+
+        x0m, y0m = rect_corners(theta_table_i[0], L_pieza * 0.06, W_pieza * 1.15)
+        fig_m.add_trace(go.Scatter(x=x0m, y=y0m, mode='lines', fill='toself', fillcolor="#95a5a6",
+                                    line=dict(color='black', width=1), showlegend=False, hoverinfo='skip'))
+
+        x0p, y0p = rect_corners(theta_load_visual_i[0], L_pieza, W_pieza)
+        fig_m.add_trace(go.Scatter(x=x0p, y=y0p, mode='lines', fill='toself', fillcolor="#1f77b4",
+                                    line=dict(color='black', width=2), showlegend=False, hoverinfo='skip'))
+
+        fig_m.add_trace(go.Scatter(x=[0], y=[table_radius * 1.18], mode='text', text=["..."],
+                                    textfont=dict(size=12, color="#333"), showlegend=False, hoverinfo='skip'))
+
+        base_traces = len(fig_m.data)
+        frames = []
+        for k, ft in enumerate(frame_times):
+            xm, ym = rect_corners(theta_table_i[k], L_pieza * 0.06, W_pieza * 1.15)
+            xp, yp = rect_corners(theta_load_visual_i[k], L_pieza, W_pieza)
+            slip_now = slip_deg_i[k]
+            is_slip_now = ft >= t_stop and slip_now > 1e-9
+            color_now = "#e74c3c" if is_slip_now else "#1f77b4"
+
+            exag_note = f" (x{exageracion:.0f})" if exageracion > 1 and slip_now > 0 else ""
+            txt = f"θ_mesa={theta_table_i[k]:.2f}° | ω={omega_arr[np.argmin(np.abs(t_arr-ft))]:.1f}°/s"
+            if is_slip_now:
+                txt = f"⚠️ DESLIZANDO — Δθ={slip_now:.4f}°{exag_note} | " + txt
+
+            frames.append(go.Frame(
+                data=[
+                    go.Scatter(x=xm, y=ym),
+                    go.Scatter(x=xp, y=yp, fillcolor=color_now),
+                    go.Scatter(x=[0], y=[table_radius * 1.18], text=[txt]),
+                ],
+                traces=[base_traces - 3, base_traces - 2, base_traces - 1] if False else [base_traces - 3 + 3 - 3, base_traces - 3 + 1, base_traces - 3 + 2],
+                name=str(k)
+            ))
+
+        # Nota: los índices de traces se corrigen abajo de forma explícita
+        fixed_frames = []
+        idx_gray = base_traces - 2
+        idx_piece = base_traces - 1
+        idx_text = base_traces  # el último trace agregado (texto) está en base_traces (0-indexed => len-1)
+        # Recalculamos índices reales:
+        idx_gray = len(fig_m.data) - 3
+        idx_piece = len(fig_m.data) - 2
+        idx_text = len(fig_m.data) - 1
+
+        frames = []
+        for k, ft in enumerate(frame_times):
+            xm, ym = rect_corners(theta_table_i[k], L_pieza * 0.06, W_pieza * 1.15)
+            xp, yp = rect_corners(theta_load_visual_i[k], L_pieza, W_pieza)
+            slip_now = slip_deg_i[k]
+            is_slip_now = ft >= t_stop and slip_now > 1e-9
+            color_now = "#e74c3c" if is_slip_now else "#1f77b4"
+            omega_now = np.interp(ft, t_arr, omega_arr)
+            exag_note = f" (x{exageracion:.0f})" if exageracion > 1 and slip_now > 0 else ""
+            txt = f"θ_mesa={theta_table_i[k]:.2f}° | ω={omega_now:.1f}°/s"
+            if is_slip_now:
+                txt = f"⚠️ DESLIZANDO — Δθ={slip_now:.4f}°{exag_note} | " + txt
+            frames.append(go.Frame(
+                data=[go.Scatter(x=xm, y=ym), go.Scatter(x=xp, y=yp, fillcolor=color_now), go.Scatter(x=[0], y=[table_radius * 1.18], text=[txt])],
+                traces=[idx_gray, idx_piece, idx_text],
+                name=str(k)
+            ))
+
+        fig_m.frames = frames
+        target_total_ms = float(np.clip(t_arr[-1] * 1000.0, 4000.0, 14000.0))
+        frame_ms = max((target_total_ms / n_frames) / speed_mult, 8.0)
+
+        fig_m.update_layout(
+            height=560, template="plotly_white",
+            xaxis=dict(range=[-table_radius * 1.3, table_radius * 1.3], scaleanchor="y", title="mm"),
+            yaxis=dict(range=[-table_radius * 1.3, table_radius * 1.3], title="mm"),
+            legend=dict(orientation="h", y=-0.1, x=0.5, xanchor="center", font=dict(size=10)),
+            margin=dict(l=40, t=70, b=60, r=40),
+            updatemenus=[dict(type="buttons", showactive=False, y=1.1, x=0.0, xanchor="left",
+                buttons=[dict(label="▶ Play", method="animate",
+                              args=[None, dict(frame=dict(duration=frame_ms, redraw=True), fromcurrent=True, transition=dict(duration=0), mode="immediate")]),
+                         dict(label="⏸ Pause", method="animate",
+                              args=[[None], dict(frame=dict(duration=0, redraw=False), mode="immediate")])])],
+            sliders=[dict(steps=[dict(method="animate", args=[[str(k)], dict(mode="immediate", frame=dict(duration=0, redraw=True))], label=f"{frame_times[k]:.2f}s") for k in range(n_frames)],
+                          x=0.0, len=0.96, y=-0.22)]
+        )
+        return fig_m
+
+    fig_mesa = construir_mesa_animacion(
+        t_m, theta_m, omega_m, t_stop_m, det_m['t_fully_stopped'], det_m['angle_stop'],
+        desliza_m, det_m['deslizamiento_deg_stop'], det_m['alpha_max_pieza_deg'],
+        st.session_state.speed_slow_mesa, r_max_mesa, n_frames_mesa, speed_mult_mesa, exag_mesa
+    )
+    st.plotly_chart(fig_mesa, use_container_width=True)
 
 
 # ==========================================
@@ -816,91 +1126,78 @@ with tab_math:
     )
 
     st.subheader("1. Mechanical Elasticity Floor")
-    st.markdown(L(
-        "Industrial belt/roller conveyors exhibit mechanical compliance (chain slack, belt stretch, and chassis flex). "
-        "Even if PLC parameters define a stopping ramp near $0~text{ ms}$, the physical mechanical response time "
-        "is lower bounded by $T_{~text{min}} = 20.0~,~text{ms}$:"
-    ))
     st.latex(L(r"t_{~text{stop~_real}} = ~max~left(t_{~text{ramp~_stop}}, 20.0~,~text{ms}~right)"))
 
     st.subheader("2. Conveyor Stop Deceleration")
-    st.markdown(L("When the part trips the stop sensor at creep velocity $v_{~text{slow}}$, the conveyor applies a stopping deceleration $a_{~text{stop}}$:"))
     st.latex(L(r"a_{~text{stop}} = ~frac{v_{~text{slow}}}{t_{~text{stop~_real}}}"))
-    st.markdown(L("Expressed in dimensionless $G$ forces relative to $g = 9810~,~text{mm/s}^2$:"))
     st.latex(L(r"g_{~text{conv}} = ~frac{a_{~text{stop}}}{9810}"))
 
     st.subheader("3. Static Friction Threshold & Slip Determination")
-    st.markdown(L("According to Coulomb's Law of Dry Friction, the maximum shear force transmitted without slipping is governed by the static friction coefficient $~mu$:"))
-    st.latex(L(r"F_{~text{friction~_max}} = ~mu ~cdot m ~cdot g"))
     st.latex(L(r"a_{~text{max~_piece}} = ~mu ~cdot g = ~mu ~cdot 9810~,~text{mm/s}^2"))
-    st.latex(L(r"g_{~text{max~_piece}} = ~mu"))
     st.markdown(L(
-        "**Slip Condition Criterion:**\\n"
-        "* If $g_{~text{conv}} ~le ~mu$: the static friction force holds the part in place. **No slip occurs** ($~Delta d = 0$).\\n"
-        "* If $g_{~text{conv}} > ~mu$: the stopping force exceeds static friction limits. The part breaks traction and **slips forward by inertia**."
+        "* If $g_{~text{conv}} ~le ~mu$: **no slip**.\\n"
+        "* If $g_{~text{conv}} > ~mu$: the part **slips forward by inertia**."
     ))
 
     st.subheader("4. Relative Part Slip Estimation")
-    st.markdown(L("When slip occurs, the conveyor decelerates at $a_{~text{stop}}$, while the part decelerates at a slower rate dictated solely by dynamic friction $a_{~text{max~_piece}}$."))
-    st.markdown("Stopping distance of the part under friction:")
     st.latex(L(r"d_{~text{piece}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{max~_piece}}}"))
-    st.markdown("Stopping distance of the physical conveyor belt:")
     st.latex(L(r"d_{~text{conveyor}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{stop}}}"))
-    st.markdown(L("Net relative slippage displacement ($~Delta d$):"))
-    st.latex(L(r"~Delta d = d_{~text{piece}} - d_{~text{conveyor}} = ~frac{v_{~text{slow}}^2}{2} ~left( ~frac{1}{~mu ~cdot g} - ~frac{1}{a_{~text{stop}}} ~right)"))
+    st.latex(L(r"~Delta d = d_{~text{piece}} - d_{~text{conveyor}}"))
 
     st.subheader("5. Safety Factor & Minimum Required Friction")
-    st.markdown("A practical engineering KPI to gauge margin before slip occurs:")
     st.latex(L(r"~text{Factor de Seguridad} = ~frac{~mu}{g_{~text{conv}}}"))
-    st.markdown(
-        "* $> 1.0$: hay margen — la fricción disponible supera la fuerza de frenado.\\n"
-        "* $= 1.0$: límite crítico exacto.\\n"
-        "* $< 1.0$: la pieza **desliza** con la configuración actual."
-    )
-    st.latex(L(r"~mu_{~text{minimo requerido}} = g_{~text{conv}}"))
 
     st.subheader("6. Carrier vs. Load: Two-Body Slip Model")
-    st.markdown(L(
-        "The simulation models **two rigid bodies traveling together**:\\n\\n"
-        "* **Work Piece Carrier**: mechanically coupled to the conveyor rollers/wheels — it always follows the belt's "
-        "exact kinematic profile, including the final stop deceleration $a_{~text{stop}}$. It never slips relative to the conveyor.\\n"
-        "* **Load**: rests on top of the carrier, held in place **only by dry friction**. It moves in lockstep with the "
-        "carrier during ACCEL_FAST, CRUISE_FAST, DECEL_TO_SLOW and CRUISE_SLOW. Only during DECEL_TO_STOP, if "
-        "$g_{~text{conv}} > ~mu$, the load cannot keep up and slides forward relative to the carrier."
-    ))
-    st.latex(L(r"x_{~text{carrier}}(t) = x_{~text{conveyor}}(t) ~quad ~text{(rigid coupling, no slip, always)}"))
+    st.latex(L(r"x_{~text{carrier}}(t) = x_{~text{conveyor}}(t)"))
     st.latex(L(
-        r"x_{~text{load}}(t) = ~begin{cases} x_{~text{carrier}}(t) & t < t_{~text{stop}} ~text{ or no slip} \\\\ "
+        r"x_{~text{load}}(t) = ~begin{cases} x_{~text{carrier}}(t) & t < t_{~text{stop}} \\\\ "
         r"L_{~text{total}} + v_{~text{slow}}(t-t_{~text{stop}}) - ~frac{1}{2}a_{~text{max~_piece}}(t-t_{~text{stop}})^2 & "
-        r"t ~ge t_{~text{stop}} ~text{ and slip active} ~end{cases}"
+        r"t ~ge t_{~text{stop}} ~end{cases}"
     ))
-    st.latex(L(r"~text{Slip}(t) = x_{~text{load}}(t) - x_{~text{carrier}}(t) ~ge 0"))
-    st.markdown(
-        "En condiciones típicas (μ≈0.28, velocidades de creep bajas), este deslizamiento resulta del orden de "
-        "**fracciones de milímetro a pocos milímetros** — imperceptible a escala real, por lo que la animación "
-        "incluye un factor de exageración visual aplicado únicamente al desplazamiento relativo (nunca a la posición absoluta)."
-    )
 
-    st.subheader("7. Sensor Distance Validation (Bug Fix)")
-    st.markdown(L(
-        "The distance between the reduction sensor and the stop sensor ($S_{~text{distance}}$) must be large enough "
-        "for the belt to decelerate from $v_{~text{fast}}$ to $v_{~text{slow}}$ using the configured RAMP_DECEL:"
-    ))
+    st.subheader("7. Sensor Distance Validation")
     st.latex(L(r"d_{~text{needed}} = ~frac{v_{~text{fast}}^2 - v_{~text{slow}}^2}{2 ~cdot ~text{RAMP~_DECEL}}"))
+
+    st.subheader("8. Turning Table: Angular-to-Linear Analogy")
     st.markdown(L(
-        "If $d_{~text{needed}} > S_{~text{distance}}$, the system reaches the stop sensor **before** finishing the "
-        "deceleration ramp — the position trigger for the stop sensor is evaluated globally at every time step "
-        "(regardless of kinematic state) so the final stop deceleration always engages exactly at $L_{~text{total}}$, "
-        "preventing RAMP_DECEL from incorrectly contaminating the overrun calculation."
+        "The turning table reuses the exact same state machine and friction criterion, replacing linear "
+        "quantities with angular ones ($~theta, ~omega, ~alpha$ instead of $x, v, a$), evaluated at the "
+        "critical radius $R_{~text{max}}$ (farthest point of the piece from the rotation axis). Since the piece "
+        "is centered on the rotation axis:"
+    ))
+    st.latex(L(r"R_{~text{max}} = ~frac{~text{Longitud Total de Pieza}}{2}"))
+
+    st.subheader("9. Turning Table: Tangential Component (Braking)")
+    st.markdown(L("Directly analogous to the linear conveyor model, evaluated at $R_{~text{max}}$:"))
+    st.latex(L(r"~alpha_{~text{stop}} = ~frac{~omega_{~text{slow}}}{t_{~text{stop~_real}}} ~quad [°/s^2]"))
+    st.latex(L(r"a_{~text{tan~_stop}} = ~alpha_{~text{stop,rad}} ~cdot R_{~text{max}} ~quad [~text{mm/s}^2]"))
+    st.latex(L(r"g_{~text{conv}} = ~frac{a_{~text{tan~_stop}}}{9810}"))
+    st.markdown(L("Slip criterion identical to the linear case: slip occurs if $g_{~text{conv}} > ~mu$."))
+
+    st.subheader("10. Turning Table: Centripetal Component (Constant Speed Cruise)")
+    st.markdown(L(
+        "**This has no equivalent in the linear conveyor model.** Even at perfectly constant angular velocity "
+        "(zero angular acceleration), any point at radius $R$ experiences a centripetal acceleration directed "
+        "toward the rotation center:"
+    ))
+    st.latex(L(r"a_{~text{cent}} = ~omega_{~text{rad}}^2 ~cdot R_{~text{max}} ~quad [~text{mm/s}^2]"))
+    st.latex(L(r"g_{~text{cent}} = ~frac{a_{~text{cent}}}{9810}"))
+    st.markdown(L(
+        "If $g_{~text{cent}} > ~mu$ at the cruise speed, the piece is at risk of sliding **radially outward** "
+        "even without any braking event — this must be checked independently at both $~omega_{~text{fast}}$ "
+        "and $~omega_{~text{slow}}$."
     ))
 
-    st.subheader("8. Integration Engine & Kinematic Profiles")
+    st.subheader("11. Scope Limitation: Free-Sliding Dynamics on a Rotating Frame")
     st.markdown(L(
-        "The state machine integrates velocity and position at a step size of $~Delta t = 1~,~text{ms}$:\\n\\n"
-        "1. **ACCEL_FAST**: Accelerates at RAMP_ACCEL up to SPEED_AUTO_FAST.\\n"
-        "2. **CRUISE_FAST**: Maintains fast cruise speed until reaching $P_{~text{reduction}} = L_{~text{total}} - S_{~text{distance}}$.\\n"
-        "3. **DECEL_TO_SLOW**: Decelerates at RAMP_DECEL down to SPEED_AUTO_SLOW.\\n"
-        "4. **CRUISE_SLOW**: Creeps at slow speed until reaching $P_{~text{stop}} = L_{~text{total}}$.\\n"
-        "5. **DECEL_TO_STOP**: Final stop deceleration based on $t_{~text{stop~_real}}$, triggered at $L_{~text{total}}$ "
-        "regardless of current kinematic state."
+        "A fully rigorous simulation of an object sliding freely on a rotating platform (once friction is "
+        "exceeded) requires solving motion in a non-inertial rotating reference frame, which introduces "
+        "Coriolis and Euler pseudo-forces and generally results in a curved (non-radial) sliding path. "
+        "This simulator intentionally simplifies that scenario:\\n\\n"
+        "* **Tangential slip during final braking** is modeled with full displacement animation, using the "
+        "same validated Coulomb-friction kinematics as the linear conveyor, evaluated at $R_{~text{max}}$.\\n"
+        "* **Centripetal risk during constant-speed cruise** is reported as a numeric stability indicator "
+        "(G-force vs. $~mu$), without animating a displacement trajectory, since a physically rigorous model "
+        "of that specific failure mode is substantially more complex and was outside the scope confirmed for "
+        "this implementation."
     ))
