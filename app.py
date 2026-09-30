@@ -28,6 +28,26 @@ CARGA_LARGO_MM = 1200.0
 PIEZA_MESA_ANCHO_MM = 400.0
 
 # ==========================================
+# CONVERSIÓN ÁNGULO <-> MM SOBRE UN RIEL A RADIO FIJO
+# ==========================================
+def angle_to_mm(angle_deg, radius, mode="Arco (R·θ)"):
+    theta_rad = np.radians(angle_deg)
+    if mode.startswith("Arco"):
+        return radius * theta_rad
+    else:
+        return 2.0 * radius * np.sin(theta_rad / 2.0)
+
+def mm_to_angle(mm, radius, mode="Arco (R·θ)"):
+    if radius <= 0:
+        return 0.0
+    if mode.startswith("Arco"):
+        theta_rad = mm / radius
+    else:
+        ratio = np.clip(mm / (2.0 * radius), -1.0, 1.0)
+        theta_rad = 2.0 * np.arcsin(ratio)
+    return np.degrees(theta_rad)
+
+# ==========================================
 # SESSION STATE INITIALIZATION
 # ==========================================
 defaults = {
@@ -40,6 +60,7 @@ defaults = {
     "speed_fast_mesa": 45.0, "speed_slow_mesa": 10.0, "accel_mesa": 90.0, "decel_mesa": 90.0,
     "sensor_angle_mesa": 15.0, "ramp_stop_mesa": 100.0, "mu_mesa": 0.28,
     "angle_total_mesa": 90.0, "pieza_longitud_mesa": 2110.0,
+    "radio_sensor_mesa": 545.25,
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -95,7 +116,8 @@ st.sidebar.number_input("Ángulo Sensor Reducción MESA (°)", value=st.session_
 st.sidebar.number_input("RAMP_STOP MESA (ms)", value=st.session_state.ramp_stop_mesa, step=10.0, min_value=0.0, key="ramp_stop_mesa", help="Rampa de frenado angular en el sensor de paro")
 st.sidebar.number_input("Coeficiente Fricción μ MESA", value=st.session_state.mu_mesa, step=0.01, min_value=0.01, max_value=1.0, key="mu_mesa")
 st.sidebar.number_input("Ángulo Total de Giro MESA (°)", value=st.session_state.angle_total_mesa, step=15.0, key="angle_total_mesa", help="Equivalente angular de 'Largo Total Conveyor' — abierto")
-st.sidebar.number_input("Longitud Total de Pieza MESA (mm)", value=st.session_state.pieza_longitud_mesa, step=10.0, min_value=1.0, key="pieza_longitud_mesa", help="La pieza se posiciona centrada en el eje de giro. R_max = Longitud / 2")
+st.sidebar.number_input("Longitud Total de Pieza MESA (mm)", value=st.session_state.pieza_longitud_mesa, step=10.0, min_value=1.0, key="pieza_longitud_mesa", help="La pieza se posiciona centrada en el eje de giro. R_max = Longitud / 2 (usado SOLO para el análisis de deslizamiento)")
+st.sidebar.number_input("Radio Riel Sensores MESA (mm)", value=st.session_state.radio_sensor_mesa, step=5.0, min_value=1.0, key="radio_sensor_mesa", help="Radio físico donde están montados los sensores de reducción/paro sobre el riel — distinto del radio de la pieza")
 
 
 # ==========================================
@@ -864,12 +886,12 @@ with tab_sim:
     st.markdown("---")
     st.header("🔄 Mesa Giratoria (Turning Table)")
     st.caption(
-        f"Pieza centrada en el eje de giro. R_max = Longitud/2 = {r_max_mesa:.1f} mm. "
-        f"A diferencia del conveyor lineal, aquí existen DOS componentes de fuerza: tangencial (al frenar/acelerar) "
-        f"y centrípeta (presente incluso a velocidad angular constante)."
+        f"Pieza centrada en el eje de giro. R_max (deslizamiento) = Longitud/2 = {r_max_mesa:.1f} mm. "
+        f"⚠️ Distinto del Radio Riel Sensores ({st.session_state.radio_sensor_mesa:.2f} mm), que solo se usa "
+        f"para convertir posiciones de sensores entre grados y mm."
     )
 
-    # ---- NUEVA: GRÁFICA DE VELOCIDAD ANGULAR (equivalente a la del conveyor lineal) ----
+    # ---- GRÁFICA DE VELOCIDAD ANGULAR ----
     fig_mesa_vel = go.Figure()
     fig_mesa_vel.add_trace(go.Scatter(x=t_m, y=omega_m, mode='lines', name='Angular Velocity (Mesa)',
                                        line=dict(color='#1f77b4', width=3)))
@@ -897,6 +919,86 @@ with tab_sim:
             f"pero `Ángulo Sensor Reducción MESA` solo tiene **{st.session_state.sensor_angle_mesa:.1f}°**."
         )
 
+    # ---- NUEVA SECCIÓN: OVERRUN ANGULAR Y CONVERSIÓN AL RIEL DE SENSORES ----
+    st.markdown("---")
+    st.subheader("📏 Overrun Angular y su Conversión al Riel de Sensores (mm)")
+    st.caption(
+        "Los sensores de esta mesa NO giran — están fijos sobre un riel a un radio constante desde el centro "
+        "de rotación. Esta sección convierte el overrun angular (causado por RAMP_STOP) a la distancia lineal "
+        "equivalente sobre ese riel, para que mantenimiento pueda reposicionar sensores usando cinta métrica."
+    )
+
+    modo_conversion = st.radio(
+        "Fórmula de conversión Ángulo ↔ mm",
+        ["Arco (R·θ) — recomendado", "Cuerda (2R·sin(θ/2))"],
+        horizontal=True, key="modo_conversion_mesa",
+        help="Arco = distancia exacta si el riel sigue la curvatura a ese radio (caso típico). "
+             "Cuerda = distancia recta entre dos puntos del círculo (útil si el riel es perfectamente recto)."
+    )
+    modo_key = "Arco (R·θ)" if modo_conversion.startswith("Arco") else "Cuerda (2R·sin(θ/2))"
+    R_sensor = st.session_state.radio_sensor_mesa
+
+    overrun_mm_riel = angle_to_mm(ang_overrun_m, R_sensor, modo_key)
+
+    ov1, ov2, ov3 = st.columns(3)
+    ov1.metric("Overrun Angular", f"{ang_overrun_m:.4f}°")
+    ov2.metric(f"Overrun en el Riel (R={R_sensor:.2f}mm)", f"{overrun_mm_riel:.3f} mm")
+    ov3.metric("Overrun Time", f"{overrun_time_m*1000:.0f} ms")
+
+    st.markdown("**Memoria de cálculo — Overrun Angular (análogo directo al conveyor lineal):**")
+    st.latex(L(
+        f"~Delta~theta_{{~text{{overrun}}}} ~approx ~frac{{1}}{{2}} ~cdot ~omega_{{~text{{slow}}}} ~cdot t_{{~text{{stop~_real}}}} "
+        f"= 0.5 ~cdot {st.session_state.speed_slow_mesa:.1f}~,°/s ~cdot {det_m['ramp_stop_real_ms']/1000.0:.3f}~,s "
+        f"~approx ~mathbf{{{ang_overrun_m:.4f}°}}"
+    ))
+    if modo_key == "Arco (R·θ)":
+        st.latex(L(
+            f"s_{{~text{{mm}}}} = R_{{~text{{sensor}}}} ~cdot ~theta_{{~text{{rad}}}} "
+            f"= {R_sensor:.2f} ~cdot ~frac{{{ang_overrun_m:.4f} ~cdot ~pi}}{{180}} "
+            f"= ~mathbf{{{overrun_mm_riel:.3f}~,~text{{mm}}}}"
+        ))
+    else:
+        st.latex(L(
+            f"s_{{~text{{mm}}}} = 2R_{{~text{{sensor}}}} ~sin~left(~frac{{~theta_{{~text{{rad}}}}}}{{2}}~right) "
+            f"= ~mathbf{{{overrun_mm_riel:.3f}~,~text{{mm}}}}"
+        ))
+
+    st.markdown("**🔧 Recomendación de compensación (para preservar la posición de paro original):**")
+    trigger_angle_original = st.session_state.angle_total_mesa
+    trigger_angle_compensado = trigger_angle_original - ang_overrun_m
+    trigger_mm_original = angle_to_mm(trigger_angle_original, R_sensor, modo_key)
+    trigger_mm_compensado = angle_to_mm(trigger_angle_compensado, R_sensor, modo_key)
+
+    comp1, comp2 = st.columns(2)
+    comp1.metric("Posición Actual del Sensor de Paro", f"{trigger_mm_original:.2f} mm",
+                 help=f"Equivalente a {trigger_angle_original:.2f}° sobre el riel a R={R_sensor:.2f}mm")
+    comp2.metric("Posición Compensada Recomendada", f"{trigger_mm_compensado:.2f} mm",
+                 delta=f"{(trigger_mm_compensado - trigger_mm_original):.3f} mm (mover hacia atrás)",
+                 delta_color="inverse",
+                 help=f"Equivalente a {trigger_angle_compensado:.2f}°")
+
+    st.info(
+        f"💡 Para que la mesa termine deteniéndose exactamente en el mismo punto que tendría con "
+        f"`RAMP_STOP MESA = 0`, mueve el **sensor de paro** físicamente **{abs(trigger_mm_compensado - trigger_mm_original):.3f} mm "
+        f"hacia atrás** sobre el riel (de {trigger_mm_original:.2f} mm a {trigger_mm_compensado:.2f} mm, medido desde el punto de referencia angular 0°)."
+    )
+
+    with st.expander("📐 Ver Equivalencias Completas de Sensores (Grados ↔ mm en el Riel)"):
+        eq1, eq2, eq3 = st.columns(3)
+        eq1.metric("Ángulo Total MESA", f"{st.session_state.angle_total_mesa:.2f}°",
+                   help=f"= {angle_to_mm(st.session_state.angle_total_mesa, R_sensor, modo_key):.2f} mm en el riel")
+        eq2.metric("→ mm en el Riel", f"{angle_to_mm(st.session_state.angle_total_mesa, R_sensor, modo_key):.2f} mm")
+        eq3.metric("Ángulo Sensor Reducción MESA", f"{st.session_state.sensor_angle_mesa:.2f}°",
+                   help=f"= {angle_to_mm(st.session_state.sensor_angle_mesa, R_sensor, modo_key):.2f} mm en el riel")
+        st.caption(
+            f"Posición del Sensor de Reducción (medida desde el punto de paro, hacia atrás): "
+            f"**{angle_to_mm(st.session_state.sensor_angle_mesa, R_sensor, modo_key):.2f} mm** sobre el riel."
+        )
+        st.caption(
+            "Nota: si tu riel es recto y corto (como en tu diseño, con sensores separados ~150mm), la diferencia "
+            "entre Arco y Cuerda es del orden de centésimas de mm — ambos métodos son válidos en la práctica."
+        )
+
     st.markdown("---")
     st.subheader("📊 Análisis de Deslizamiento — Frenado Final (Tangencial)")
     m1, m2, m3, m4 = st.columns(4)
@@ -912,11 +1014,10 @@ with tab_sim:
     st.subheader("🌀 Análisis de Riesgo Centrípeto — En Crucero (Velocidad Constante)")
     st.caption(
         "Este riesgo existe SIEMPRE que la mesa gira a velocidad constante, sin necesidad de frenar. "
-        "No tiene equivalente en el conveyor lineal."
+        "No tiene equivalente en el conveyor lineal. Usa R_max (Longitud de Pieza / 2), no el radio del riel."
     )
     mc1, mc2, mc3, mc4 = st.columns(4)
-    mc1.metric("G Centrípeta @ Velocidad Rápida", f"{det_m['g_cent_fast']:.3f} G",
-               help="a_cent = ω² · R_max, evaluado a SPEED_AUTO_FAST MESA")
+    mc1.metric("G Centrípeta @ Velocidad Rápida", f"{det_m['g_cent_fast']:.3f} G")
     mc2.metric("Estabilidad @ Rápida", "🔴 RIESGO" if det_m['se_desliza_cruise_fast'] else "🟢 OK")
     mc3.metric("G Centrípeta @ Velocidad Lenta", f"{det_m['g_cent_slow']:.3f} G")
     mc4.metric("Estabilidad @ Lenta", "🔴 RIESGO" if det_m['se_desliza_cruise_slow'] else "🟢 OK")
@@ -924,8 +1025,7 @@ with tab_sim:
     if det_m['se_desliza_cruise_fast'] or det_m['se_desliza_cruise_slow']:
         st.error(
             "🔴 **Riesgo de deslizamiento en crucero detectado.** La fuerza centrípeta a esta velocidad angular "
-            "y radio supera la fricción disponible — la pieza podría deslizarse hacia afuera incluso sin frenar. "
-            "Reduce la velocidad de crucero, el radio de la pieza, o incrementa μ (ej. superficie antideslizante)."
+            "y radio supera la fricción disponible."
         )
     else:
         st.success("🟢 La fuerza centrípeta en ambas velocidades de crucero está dentro del límite de fricción.")
@@ -946,7 +1046,6 @@ with tab_sim:
         ))
         st.latex(L(
             f"a_{{~text{{tan~_stop}}}} = ~alpha_{{~text{{stop}}}} ~cdot R_{{~text{{max}}}} "
-            f"= {det_m['alpha_stop']:.2f} ~cdot {r_max_mesa:.1f}~,~text{{mm}} ~text{{(convertido a rad)}} "
             f"= {det_m['a_tan_stop']:.2f}~,~text{{mm/s}}^2"
         ))
         st.latex(L(
@@ -954,9 +1053,7 @@ with tab_sim:
         ))
 
         st.markdown("**Paso 3: Componente Centrípeta en Crucero**")
-        st.latex(L(
-            f"a_{{~text{{cent}}}} = ~omega^2 ~cdot R_{{~text{{max}}}} ~quad ~text{{(en radianes)}}"
-        ))
+        st.latex(L(r"a_{~text{cent}} = ~omega^2 ~cdot R_{~text{max}} ~quad ~text{(en radianes)}"))
         st.latex(L(
             f"g_{{~text{{cent,fast}}}} = ~mathbf{{{det_m['g_cent_fast']:.3f}~,G}} ~quad "
             f"g_{{~text{{cent,slow}}}} = ~mathbf{{{det_m['g_cent_slow']:.3f}~,G}}"
@@ -965,10 +1062,6 @@ with tab_sim:
         st.markdown("**Paso 4: Criterio de Deslizamiento al Frenar**")
         if desliza_m:
             st.error(f"🔴 **SLIP AL FRENAR:** g_conv ({g_conv_m:.3f} G) > μ ({st.session_state.mu_mesa:.2f} G)")
-            st.latex(L(
-                f"~Delta~theta = ~frac{{~Delta d}}{{R_{{~text{{max}}}}}} ~cdot ~frac{{180}}{{~pi}} "
-                f"= ~mathbf{{{det_m['deslizamiento_deg_stop']:.4f}°}}"
-            ))
         else:
             st.success(f"🟢 **ESTABLE AL FRENAR:** g_conv ({g_conv_m:.3f} G) ≤ μ ({st.session_state.mu_mesa:.2f} G)")
 
@@ -984,9 +1077,7 @@ with tab_sim:
     st.subheader("🎬 Animación: Vista Superior de la Mesa Girando")
     st.caption(
         "Vista desde arriba. El rectángulo gris representa la mesa/carrier girando (sin slip). "
-        "La pieza (color) se muestra centrada; se pone roja durante el frenado final si desliza tangencialmente "
-        "(desplazamiento angular exagerado para visibilidad — el riesgo centrípeto en crucero se reporta arriba "
-        "como indicador numérico, no se anima por la complejidad de modelar deslizamiento libre en un marco giratorio)."
+        "La pieza (color) se muestra centrada; se pone roja durante el frenado final si desliza tangencialmente."
     )
 
     vel_mesa_anim = st.select_slider("Velocidad de reproducción (Mesa)", options=["0.5x", "1x", "2x", "4x"], value="1x", key="vel_mesa")
@@ -1118,10 +1209,6 @@ with tab_math:
 
     st.subheader("3. Static Friction Threshold & Slip Determination")
     st.latex(L(r"a_{~text{max~_piece}} = ~mu ~cdot g = ~mu ~cdot 9810~,~text{mm/s}^2"))
-    st.markdown(L(
-        "* If $g_{~text{conv}} ~le ~mu$: **no slip**.\\n"
-        "* If $g_{~text{conv}} > ~mu$: the part **slips forward by inertia**."
-    ))
 
     st.subheader("4. Relative Part Slip Estimation")
     st.latex(L(r"d_{~text{piece}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{max~_piece}}}"))
@@ -1133,22 +1220,11 @@ with tab_math:
 
     st.subheader("6. Carrier vs. Load: Two-Body Slip Model")
     st.latex(L(r"x_{~text{carrier}}(t) = x_{~text{conveyor}}(t)"))
-    st.latex(L(
-        r"x_{~text{load}}(t) = ~begin{cases} x_{~text{carrier}}(t) & t < t_{~text{stop}} \\\\ "
-        r"L_{~text{total}} + v_{~text{slow}}(t-t_{~text{stop}}) - ~frac{1}{2}a_{~text{max~_piece}}(t-t_{~text{stop}})^2 & "
-        r"t ~ge t_{~text{stop}} ~end{cases}"
-    ))
 
     st.subheader("7. Sensor Distance Validation")
     st.latex(L(r"d_{~text{needed}} = ~frac{v_{~text{fast}}^2 - v_{~text{slow}}^2}{2 ~cdot ~text{RAMP~_DECEL}}"))
 
     st.subheader("8. Turning Table: Angular-to-Linear Analogy")
-    st.markdown(L(
-        "The turning table reuses the exact same state machine and friction criterion, replacing linear "
-        "quantities with angular ones ($~theta, ~omega, ~alpha$ instead of $x, v, a$), evaluated at the "
-        "critical radius $R_{~text{max}}$ (farthest point of the piece from the rotation axis). Since the piece "
-        "is centered on the rotation axis:"
-    ))
     st.latex(L(r"R_{~text{max}} = ~frac{~text{Longitud Total de Pieza}}{2}"))
 
     st.subheader("9. Turning Table: Tangential Component (Braking)")
@@ -1157,18 +1233,39 @@ with tab_math:
     st.latex(L(r"g_{~text{conv}} = ~frac{a_{~text{tan~_stop}}}{9810}"))
 
     st.subheader("10. Turning Table: Centripetal Component (Constant Speed Cruise)")
-    st.markdown(L(
-        "**This has no equivalent in the linear conveyor model.** Even at perfectly constant angular velocity, "
-        "any point at radius $R$ experiences a centripetal acceleration directed toward the rotation center:"
-    ))
     st.latex(L(r"a_{~text{cent}} = ~omega_{~text{rad}}^2 ~cdot R_{~text{max}} ~quad [~text{mm/s}^2]"))
     st.latex(L(r"g_{~text{cent}} = ~frac{a_{~text{cent}}}{9810}"))
 
     st.subheader("11. Scope Limitation: Free-Sliding Dynamics on a Rotating Frame")
     st.markdown(L(
-        "A fully rigorous simulation of an object sliding freely on a rotating platform (once friction is "
-        "exceeded) requires solving motion in a non-inertial rotating reference frame, introducing Coriolis "
-        "and Euler pseudo-forces. This simulator intentionally simplifies that scenario:\\n\\n"
-        "* **Tangential slip during final braking** is modeled with full displacement animation.\\n"
-        "* **Centripetal risk during constant-speed cruise** is reported as a numeric stability indicator only."
+        "A fully rigorous simulation of an object sliding freely on a rotating platform requires solving motion "
+        "in a non-inertial rotating reference frame, introducing Coriolis and Euler pseudo-forces. This simulator "
+        "intentionally simplifies that scenario: tangential slip during final braking is animated; centripetal "
+        "risk during constant-speed cruise is reported as a numeric indicator only."
+    ))
+
+    st.subheader("12. Sensor Rail: Angular-to-Linear Conversion for Maintenance")
+    st.markdown(L(
+        "On this turning table, position sensors are **stationary**, mounted on a fixed rail at a constant "
+        "radius $R_{~text{sensor}}$ from the rotation axis (measured directly on the machine, e.g. 545.25 mm). "
+        "A flag/dog attached to the rotating table (also at that radius) trips the sensors as it sweeps past. "
+        "Maintenance measures and adjusts these sensors linearly (mm) with a tape measure, not with a protractor, "
+        "so the app provides an exact conversion between the angular quantities used by the physics engine and "
+        "the equivalent linear distance on that rail."
+    ))
+    st.latex(L(r"s_{~text{arc}} = R_{~text{sensor}} ~cdot ~theta_{~text{rad}} ~quad ~text{(exact, if rail follows the circle)}"))
+    st.latex(L(r"s_{~text{chord}} = 2R_{~text{sensor}} ~sin~left(~frac{~theta_{~text{rad}}}{2}~right) ~quad ~text{(exact straight-line distance)}"))
+    st.markdown(L(
+        "**Compensating for RAMP_STOP overrun:** since the angular overrun $~Delta~theta_{~text{overrun}}$ is added "
+        "*after* the stop sensor trips (independent of where it's mounted), moving the stop sensor's trigger "
+        "position backward by the arc-length equivalent of $~Delta~theta_{~text{overrun}}$ exactly restores the "
+        "original final resting position:"
+    ))
+    st.latex(L(
+        r"~text{Nueva posición sensor} = ~text{Posición original} - R_{~text{sensor}} ~cdot ~Delta~theta_{~text{overrun,rad}}"
+    ))
+    st.markdown(L(
+        "Note $R_{~text{sensor}}$ (the sensor rail radius, a fixed machine geometry constant) is **independent** "
+        "of $R_{~text{max}}$ (half the piece length, used only for the friction-slip risk analysis) — they serve "
+        "entirely different purposes and must not be confused."
     ))
