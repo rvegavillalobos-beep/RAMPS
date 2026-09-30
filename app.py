@@ -58,9 +58,11 @@ defaults = {
     "speed_fast_b": 450.0, "speed_slow_b": 120.0, "accel_b": 400.0, "decel_b": 300.0,
     "sensor_distance_b": 150.0, "ramp_stop_b": 0.0, "mu_b": 0.28,
     "speed_fast_mesa": 45.0, "speed_slow_mesa": 10.0, "accel_mesa": 90.0, "decel_mesa": 90.0,
-    "sensor_angle_mesa": 15.0, "ramp_stop_mesa": 100.0, "mu_mesa": 0.28,
+    "ramp_stop_mesa": 100.0, "mu_mesa": 0.28,
     "angle_total_mesa": 90.0, "pieza_longitud_mesa": 2110.0,
     "radio_sensor_mesa": 545.25,
+    "sensor_distance_mm_mesa": 150.0,  # NUEVO: distancia entre sensores en mm (medida en el riel)
+    "modo_conversion_mesa": "Arco (R·θ) — recomendado",
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -112,12 +114,25 @@ st.sidebar.number_input("SPEED_AUTO_FAST MESA (°/s)", value=st.session_state.sp
 st.sidebar.number_input("SPEED_AUTO_SLOW MESA (°/s)", value=st.session_state.speed_slow_mesa, step=1.0, key="speed_slow_mesa")
 st.sidebar.number_input("RAMP_ACCEL MESA (°/s²)", value=st.session_state.accel_mesa, step=10.0, key="accel_mesa")
 st.sidebar.number_input("RAMP_DECEL MESA (°/s²)", value=st.session_state.decel_mesa, step=10.0, key="decel_mesa")
-st.sidebar.number_input("Ángulo Sensor Reducción MESA (°)", value=st.session_state.sensor_angle_mesa, step=5.0, key="sensor_angle_mesa")
+st.sidebar.number_input("Radio Riel Sensores MESA (mm)", value=st.session_state.radio_sensor_mesa, step=5.0, min_value=1.0, key="radio_sensor_mesa", help="Radio físico donde están montados los sensores de reducción/paro sobre el riel — distinto del radio de la pieza")
+
+# ---- NUEVO: distancia entre sensores en mm (tal como se mide en el riel físico) ----
+st.sidebar.number_input(
+    "Distancia Sensor Reducción MESA (mm)",
+    value=st.session_state.sensor_distance_mm_mesa, step=5.0, min_value=0.0,
+    key="sensor_distance_mm_mesa",
+    help="Separación física entre el sensor de reducción y el sensor de paro, medida con cinta métrica sobre el riel a Radio Riel Sensores MESA."
+)
+_modo_actual = st.session_state.get("modo_conversion_mesa", "Arco (R·θ) — recomendado")
+_sensor_angle_mesa_calc = mm_to_angle(
+    st.session_state.sensor_distance_mm_mesa, st.session_state.radio_sensor_mesa, _modo_actual
+)
+st.sidebar.caption(f"↳ Equivalente angular: **{_sensor_angle_mesa_calc:.3f}°** (modo: {_modo_actual.split(' —')[0]})")
+
 st.sidebar.number_input("RAMP_STOP MESA (ms)", value=st.session_state.ramp_stop_mesa, step=10.0, min_value=0.0, key="ramp_stop_mesa", help="Rampa de frenado angular en el sensor de paro")
 st.sidebar.number_input("Coeficiente Fricción μ MESA", value=st.session_state.mu_mesa, step=0.01, min_value=0.01, max_value=1.0, key="mu_mesa")
 st.sidebar.number_input("Ángulo Total de Giro MESA (°)", value=st.session_state.angle_total_mesa, step=15.0, key="angle_total_mesa", help="Equivalente angular de 'Largo Total Conveyor' — abierto")
 st.sidebar.number_input("Longitud Total de Pieza MESA (mm)", value=st.session_state.pieza_longitud_mesa, step=10.0, min_value=1.0, key="pieza_longitud_mesa", help="La pieza se posiciona centrada en el eje de giro. R_max = Longitud / 2 (usado SOLO para el análisis de deslizamiento)")
-st.sidebar.number_input("Radio Riel Sensores MESA (mm)", value=st.session_state.radio_sensor_mesa, step=5.0, min_value=1.0, key="radio_sensor_mesa", help="Radio físico donde están montados los sensores de reducción/paro sobre el riel — distinto del radio de la pieza")
 
 
 # ==========================================
@@ -301,22 +316,16 @@ def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
     g_cent_fast = a_cent_fast / 9810.0
     g_cent_slow = a_cent_slow / 9810.0
 
-    # ---- NUEVO: Equivalentes lineales de velocidad/aceleración en R_max ----
-    v_fast_lineal = omega_fast_rad * r_max      # mm/s
-    v_slow_lineal = omega_slow_rad * r_max      # mm/s
+    v_fast_lineal = omega_fast_rad * r_max
+    v_slow_lineal = omega_slow_rad * r_max
     alpha_accel_rad = np.radians(alpha_accel)
     alpha_decel_rad = np.radians(alpha_decel)
-    a_accel_lineal = alpha_accel_rad * r_max    # mm/s² (tangencial, durante ACCEL_FAST)
-    a_decel_lineal = alpha_decel_rad * r_max    # mm/s² (tangencial, durante DECEL_TO_SLOW)
+    a_accel_lineal = alpha_accel_rad * r_max
+    a_decel_lineal = alpha_decel_rad * r_max
 
-    # ---- NUEVO: Aceleración RESULTANTE (tangencial + centrípeta) en los 4 instantes críticos ----
-    # 1) Fin de ACCEL_FAST: omega llega a omega_fast, tangencial = alpha_accel
     a_res_fin_accel = np.sqrt(a_accel_lineal ** 2 + a_cent_fast ** 2)
-    # 2) Inicio de DECEL_TO_SLOW: omega todavía en omega_fast, tangencial = alpha_decel (usualmente el peor caso)
     a_res_ini_decel = np.sqrt(a_decel_lineal ** 2 + a_cent_fast ** 2)
-    # 3) Fin de DECEL_TO_SLOW: omega ya bajó a omega_slow, tangencial = alpha_decel
     a_res_fin_decel = np.sqrt(a_decel_lineal ** 2 + a_cent_slow ** 2)
-    # 4) Inicio de DECEL_TO_STOP: omega en omega_slow, tangencial = alpha_stop (refina el criterio de frenado final)
     a_res_ini_stop = np.sqrt(a_tan_stop ** 2 + a_cent_slow ** 2)
 
     g_res_fin_accel = a_res_fin_accel / 9810.0
@@ -454,11 +463,17 @@ def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
 
 r_max_mesa = st.session_state.pieza_longitud_mesa / 2.0
 
+# ---- Conversión mm -> grados usando el modo de conversión seleccionado ----
+_modo_key_calc = "Arco (R·θ)" if st.session_state.get("modo_conversion_mesa", "Arco (R·θ) — recomendado").startswith("Arco") else "Cuerda (2R·sin(θ/2))"
+sensor_angle_mesa_actual = mm_to_angle(
+    st.session_state.sensor_distance_mm_mesa, st.session_state.radio_sensor_mesa, _modo_key_calc
+)
+
 (t_m, theta_m, omega_m, t_red_m, t_stop_m, ang_overrun_m, overrun_time_m,
  g_conv_m, desliza_m, d_desliza_mm_m, det_m) = calcular_perfil_mesa(
     st.session_state.speed_fast_mesa, st.session_state.speed_slow_mesa,
     st.session_state.accel_mesa, st.session_state.decel_mesa,
-    st.session_state.angle_total_mesa, st.session_state.sensor_angle_mesa,
+    st.session_state.angle_total_mesa, sensor_angle_mesa_actual,
     st.session_state.ramp_stop_mesa, st.session_state.mu_mesa, r_max_mesa
 )
 
@@ -960,10 +975,45 @@ with tab_sim:
         st.warning(
             f"⚠️ **Mesa — Configuración inconsistente:** `RAMP_DECEL MESA` necesita "
             f"**{det_m['angle_needed_decel']:.1f}°** para bajar de SPEED_AUTO_FAST a SPEED_AUTO_SLOW, "
-            f"pero `Ángulo Sensor Reducción MESA` solo tiene **{st.session_state.sensor_angle_mesa:.1f}°**."
+            f"pero la `Distancia Sensor Reducción MESA` ({st.session_state.sensor_distance_mm_mesa:.1f} mm ≈ "
+            f"{sensor_angle_mesa_actual:.1f}°) es insuficiente."
         )
 
-    # ---- NUEVA SECCIÓN: EQUIVALENCIA LINEAL EN EL PUNTO CRÍTICO (R_max) ----
+    # ---- SECCIÓN: DISTANCIA ENTRE SENSORES EN MM (NUEVO) ----
+    st.markdown("---")
+    st.subheader("📍 Distancia Entre Sensores (mm) — Configuración de Campo")
+    st.caption(
+        "Ingresa la separación física entre el Sensor de Reducción y el Sensor de Paro tal como se mide con "
+        "cinta métrica sobre el riel (barra lateral). La app la convierte automáticamente al ángulo equivalente "
+        "que usa el motor cinemático."
+    )
+
+    modo_conversion = st.radio(
+        "Fórmula de conversión Ángulo ↔ mm",
+        ["Arco (R·θ) — recomendado", "Cuerda (2R·sin(θ/2))"],
+        horizontal=True, key="modo_conversion_mesa",
+        help="Arco = distancia exacta si el riel sigue la curvatura a ese radio (caso típico). "
+             "Cuerda = distancia recta entre dos puntos del círculo (útil si el riel es perfectamente recto)."
+    )
+    modo_key = "Arco (R·θ)" if modo_conversion.startswith("Arco") else "Cuerda (2R·sin(θ/2))"
+    R_sensor = st.session_state.radio_sensor_mesa
+
+    sd1, sd2, sd3 = st.columns(3)
+    sd1.metric("Distancia Sensor Reducción MESA (entrada)", f"{st.session_state.sensor_distance_mm_mesa:.1f} mm")
+    sd2.metric("→ Ángulo Equivalente Usado por el Motor", f"{sensor_angle_mesa_actual:.3f}°")
+    sd3.metric("Radio Riel Sensores MESA", f"{R_sensor:.2f} mm")
+
+    st.latex(L(
+        f"~theta_{{~text{{sensor}}}} = ~text{{mm~_to~_angle}}({st.session_state.sensor_distance_mm_mesa:.1f}~,~text{{mm}}, "
+        f"R={R_sensor:.2f}~,~text{{mm}}) = ~mathbf{{{sensor_angle_mesa_actual:.3f}°}}"
+    ))
+    st.info(
+        f"💡 Este ángulo ({sensor_angle_mesa_actual:.3f}°) es el que se usa internamente como "
+        f"`Ángulo Sensor Reducción` en toda la máquina de estados y en la memoria de cálculo — no necesitas "
+        f"configurarlo por separado."
+    )
+
+    # ---- SECCIÓN: EQUIVALENCIA LINEAL EN EL PUNTO CRÍTICO (R_max) ----
     st.markdown("---")
     st.subheader("📐 Equivalencia Lineal en el Punto Crítico (R_max) — Para Comparar con el Conveyor")
     st.caption(
@@ -990,25 +1040,12 @@ with tab_sim:
         st.metric("RAMP_DECEL A", f"{st.session_state.decel_a:.1f} mm/s²",
                    delta=f"{det_m['a_decel_lineal'] - st.session_state.decel_a:+.1f} mm/s²", delta_color="off")
 
-    st.markdown("**Memoria de cálculo:**")
-    st.latex(L(
-        f"v_{{~text{{fast,lineal}}}} = ~omega_{{~text{{fast}}}} ~cdot R_{{~text{{max}}}} "
-        f"= {st.session_state.speed_fast_mesa:.1f}° ~cdot ~frac{{~pi}}{{180}} ~cdot {r_max_mesa:.1f} "
-        f"= ~mathbf{{{det_m['v_fast_lineal']:.1f}~,~text{{mm/s}}}}"
-    ))
-    st.latex(L(
-        f"a_{{~text{{accel,lineal}}}} = ~alpha_{{~text{{accel}}}} ~cdot R_{{~text{{max}}}} "
-        f"= {st.session_state.accel_mesa:.1f}°/s^2 ~cdot ~frac{{~pi}}{{180}} ~cdot {r_max_mesa:.1f} "
-        f"= ~mathbf{{{det_m['a_accel_lineal']:.1f}~,~text{{mm/s}}^2}}"
-    ))
-
     st.markdown("---")
     st.subheader("⚠️ Aceleración Resultante en los Instantes Críticos (Tangencial + Centrípeta)")
     st.caption(
         "En los extremos entre fases, la pieza siente AMBAS componentes simultáneamente. El criterio de "
         "'SLIPPING/STABLE' mostrado abajo sigue usando solo la componente tangencial en el frenado (para no "
-        "alterar el comportamiento ya validado) — este análisis adicional muestra el peor caso combinado real, "
-        "más riguroso, para que decidas si quieres adoptarlo como criterio oficial."
+        "alterar el comportamiento ya validado) — este análisis adicional muestra el peor caso combinado real."
     )
 
     res_cols = st.columns(4)
@@ -1028,19 +1065,13 @@ with tab_sim:
     if det_m['se_desliza_resultante'] and not desliza_m:
         st.warning(
             f"⚠️ **Diferencia detectada:** el criterio actual (solo tangencial) marca **STABLE**, pero el "
-            f"criterio resultante (tangencial + centrípeta combinados) indica que en **{det_m['peor_caso_label']}** "
-            f"la fuerza total ({det_m['g_res_max']:.3f} G) **supera** μ ({st.session_state.mu_mesa:.2f} G). "
-            f"Esto sugiere que el deslizamiento real podría ocurrir antes o en un punto distinto al que el "
-            f"criterio simplificado detecta. Si quieres, puedo actualizar el modelo oficial para usar este "
-            f"criterio combinado en el cálculo de distancia de deslizamiento y la animación."
+            f"criterio resultante indica que en **{det_m['peor_caso_label']}** la fuerza total "
+            f"({det_m['g_res_max']:.3f} G) **supera** μ ({st.session_state.mu_mesa:.2f} G)."
         )
     elif det_m['se_desliza_resultante']:
-        st.error(
-            f"🔴 El criterio resultante confirma deslizamiento, con margen incluso menor al reportado por el "
-            f"criterio tangencial simple — peor caso en **{det_m['peor_caso_label']}**."
-        )
+        st.error(f"🔴 El criterio resultante confirma deslizamiento — peor caso en **{det_m['peor_caso_label']}**.")
     else:
-        st.success("🟢 Incluso considerando el peor caso combinado (tangencial + centrípeta), la pieza permanece estable en todo el ciclo.")
+        st.success("🟢 Incluso considerando el peor caso combinado, la pieza permanece estable en todo el ciclo.")
 
     # ---- SECCIÓN: OVERRUN ANGULAR Y CONVERSIÓN AL RIEL DE SENSORES ----
     st.markdown("---")
@@ -1051,40 +1082,12 @@ with tab_sim:
         "equivalente sobre ese riel, para que mantenimiento pueda reposicionar sensores usando cinta métrica."
     )
 
-    modo_conversion = st.radio(
-        "Fórmula de conversión Ángulo ↔ mm",
-        ["Arco (R·θ) — recomendado", "Cuerda (2R·sin(θ/2))"],
-        horizontal=True, key="modo_conversion_mesa",
-        help="Arco = distancia exacta si el riel sigue la curvatura a ese radio (caso típico). "
-             "Cuerda = distancia recta entre dos puntos del círculo (útil si el riel es perfectamente recto)."
-    )
-    modo_key = "Arco (R·θ)" if modo_conversion.startswith("Arco") else "Cuerda (2R·sin(θ/2))"
-    R_sensor = st.session_state.radio_sensor_mesa
-
     overrun_mm_riel = angle_to_mm(ang_overrun_m, R_sensor, modo_key)
 
     ov1, ov2, ov3 = st.columns(3)
     ov1.metric("Overrun Angular", f"{ang_overrun_m:.4f}°")
     ov2.metric(f"Overrun en el Riel (R={R_sensor:.2f}mm)", f"{overrun_mm_riel:.3f} mm")
     ov3.metric("Overrun Time", f"{overrun_time_m*1000:.0f} ms")
-
-    st.markdown("**Memoria de cálculo — Overrun Angular (análogo directo al conveyor lineal):**")
-    st.latex(L(
-        f"~Delta~theta_{{~text{{overrun}}}} ~approx ~frac{{1}}{{2}} ~cdot ~omega_{{~text{{slow}}}} ~cdot t_{{~text{{stop~_real}}}} "
-        f"= 0.5 ~cdot {st.session_state.speed_slow_mesa:.1f}~,°/s ~cdot {det_m['ramp_stop_real_ms']/1000.0:.3f}~,s "
-        f"~approx ~mathbf{{{ang_overrun_m:.4f}°}}"
-    ))
-    if modo_key == "Arco (R·θ)":
-        st.latex(L(
-            f"s_{{~text{{mm}}}} = R_{{~text{{sensor}}}} ~cdot ~theta_{{~text{{rad}}}} "
-            f"= {R_sensor:.2f} ~cdot ~frac{{{ang_overrun_m:.4f} ~cdot ~pi}}{{180}} "
-            f"= ~mathbf{{{overrun_mm_riel:.3f}~,~text{{mm}}}}"
-        ))
-    else:
-        st.latex(L(
-            f"s_{{~text{{mm}}}} = 2R_{{~text{{sensor}}}} ~sin~left(~frac{{~theta_{{~text{{rad}}}}}}{{2}}~right) "
-            f"= ~mathbf{{{overrun_mm_riel:.3f}~,~text{{mm}}}}"
-        ))
 
     st.markdown("**🔧 Recomendación de compensación (para preservar la posición de paro original):**")
     trigger_angle_original = st.session_state.angle_total_mesa
@@ -1093,30 +1096,16 @@ with tab_sim:
     trigger_mm_compensado = angle_to_mm(trigger_angle_compensado, R_sensor, modo_key)
 
     comp1, comp2 = st.columns(2)
-    comp1.metric("Posición Actual del Sensor de Paro", f"{trigger_mm_original:.2f} mm",
-                 help=f"Equivalente a {trigger_angle_original:.2f}° sobre el riel a R={R_sensor:.2f}mm")
+    comp1.metric("Posición Actual del Sensor de Paro", f"{trigger_mm_original:.2f} mm")
     comp2.metric("Posición Compensada Recomendada", f"{trigger_mm_compensado:.2f} mm",
                  delta=f"{(trigger_mm_compensado - trigger_mm_original):.3f} mm (mover hacia atrás)",
-                 delta_color="inverse",
-                 help=f"Equivalente a {trigger_angle_compensado:.2f}°")
+                 delta_color="inverse")
 
     st.info(
         f"💡 Para que la mesa termine deteniéndose exactamente en el mismo punto que tendría con "
         f"`RAMP_STOP MESA = 0`, mueve el **sensor de paro** físicamente **{abs(trigger_mm_compensado - trigger_mm_original):.3f} mm "
-        f"hacia atrás** sobre el riel (de {trigger_mm_original:.2f} mm a {trigger_mm_compensado:.2f} mm, medido desde el punto de referencia angular 0°)."
+        f"hacia atrás** sobre el riel."
     )
-
-    with st.expander("📐 Ver Equivalencias Completas de Sensores (Grados ↔ mm en el Riel)"):
-        eq1, eq2, eq3 = st.columns(3)
-        eq1.metric("Ángulo Total MESA", f"{st.session_state.angle_total_mesa:.2f}°",
-                   help=f"= {angle_to_mm(st.session_state.angle_total_mesa, R_sensor, modo_key):.2f} mm en el riel")
-        eq2.metric("→ mm en el Riel", f"{angle_to_mm(st.session_state.angle_total_mesa, R_sensor, modo_key):.2f} mm")
-        eq3.metric("Ángulo Sensor Reducción MESA", f"{st.session_state.sensor_angle_mesa:.2f}°",
-                   help=f"= {angle_to_mm(st.session_state.sensor_angle_mesa, R_sensor, modo_key):.2f} mm en el riel")
-        st.caption(
-            f"Posición del Sensor de Reducción (medida desde el punto de paro, hacia atrás): "
-            f"**{angle_to_mm(st.session_state.sensor_angle_mesa, R_sensor, modo_key):.2f} mm** sobre el riel."
-        )
 
     st.markdown("---")
     st.subheader("📊 Análisis de Deslizamiento — Frenado Final (Tangencial)")
@@ -1144,6 +1133,11 @@ with tab_sim:
 
     with st.expander("🔍 Ver Desglose de Cálculo — Mesa Giratoria"):
         st.markdown("### 🧮 Memoria de Cálculo (Valores Simulados)")
+        st.markdown("**Paso 0: Distancia Sensor → Ángulo**")
+        st.latex(L(
+            f"~theta_{{~text{{sensor}}}} = {sensor_angle_mesa_actual:.3f}° ~quad ~text{{(desde "
+            f"{st.session_state.sensor_distance_mm_mesa:.1f}~,~text{{mm}} sobre riel R={R_sensor:.2f}~,~text{{mm}})}}"
+        ))
         st.markdown("**Paso 1: Tiempo de Rampa de Paro Efectivo**")
         st.latex(L(
             f"t_{{~text{{stop~_real}}}} = ~max({st.session_state.ramp_stop_mesa:.1f}~,~text{{ms}}, 20.0~,~text{{ms}}) "
@@ -1344,30 +1338,26 @@ with tab_math:
     st.latex(L(r"g_{~text{cent}} = ~frac{a_{~text{cent}}}{9810}"))
 
     st.subheader("11. Combined Resultant Acceleration at Critical Instants")
-    st.markdown(L(
-        "At the transitions between kinematic phases, the piece experiences BOTH tangential and centripetal "
-        "acceleration simultaneously (since $~omega ~neq 0$ at those exact moments). The true worst-case load "
-        "on the piece is the vector sum of both components:"
-    ))
     st.latex(L(r"a_{~text{resultante}} = ~sqrt{a_{~text{tangencial}}^2 + a_{~text{centrípeta}}^2}"))
-    st.markdown(L(
-        "This is evaluated at four critical instants: end of ACCEL_FAST, start and end of DECEL_TO_SLOW, and "
-        "start of DECEL_TO_STOP — the maximum among these four represents the true worst-case G-force on the "
-        "piece throughout the entire cycle, and should be compared against $~mu$ for a fully rigorous slip check."
-    ))
 
     st.subheader("12. Scope Limitation: Free-Sliding Dynamics on a Rotating Frame")
     st.markdown(L(
         "A fully rigorous simulation of an object sliding freely on a rotating platform requires solving motion "
-        "in a non-inertial rotating reference frame, introducing Coriolis and Euler pseudo-forces. This simulator "
-        "intentionally simplifies that scenario: tangential slip during final braking is animated; the combined "
-        "resultant is reported as an additional numeric indicator, without altering the officially validated "
-        "SLIPPING/STABLE flag unless explicitly requested."
+        "in a non-inertial rotating reference frame, introducing Coriolis and Euler pseudo-forces."
     ))
 
     st.subheader("13. Sensor Rail: Angular-to-Linear Conversion for Maintenance")
+    st.markdown(L(
+        "Since sensors on the turning table are stationary on a fixed rail at radius $R_{~text{sensor}}$, "
+        "maintenance configures sensor spacing directly in millimeters (as measured with a tape measure), rather "
+        "than in degrees. The app converts this linear distance into the equivalent angle used internally by "
+        "the kinematic engine:"
+    ))
+    st.latex(L(r"~theta_{~text{sensor}} = ~frac{s_{~text{mm}}}{R_{~text{sensor}}} ~quad ~text{(Arco, en radianes, luego convertido a grados)}"))
+    st.latex(L(r"~theta_{~text{sensor}} = 2 ~arcsin~left(~frac{s_{~text{mm}}}{2R_{~text{sensor}}}~right) ~quad ~text{(Cuerda)}"))
+    st.markdown(L(
+        "This is the inverse of the arc/chord formulas used to convert the RAMP_STOP-induced angular overrun "
+        "back into millimeters for sensor repositioning (Section 9 practical application)."
+    ))
     st.latex(L(r"s_{~text{arc}} = R_{~text{sensor}} ~cdot ~theta_{~text{rad}}"))
     st.latex(L(r"s_{~text{chord}} = 2R_{~text{sensor}} ~sin~left(~frac{~theta_{~text{rad}}}{2}~right)"))
-    st.latex(L(
-        r"~text{Nueva posición sensor} = ~text{Posición original} - R_{~text{sensor}} ~cdot ~Delta~theta_{~text{overrun,rad}}"
-    ))
