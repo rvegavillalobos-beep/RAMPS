@@ -39,17 +39,23 @@ def mm_to_angle(mm, radius, mode="Arco (R·θ)"):
     return np.degrees(theta_rad)
 
 # ==========================================
+# CONSTANTE MECÁNICA GLOBAL
+# ==========================================
+T_MIN_MECANICO_MS = 20.0
+T_MIN_MECANICO_S = T_MIN_MECANICO_MS / 1000.0
+
+# ==========================================
 # SESSION STATE INITIALIZATION
 # ==========================================
 defaults = {
     "conveyor_length": 3000.0,
     "speed_fast_a": 300.0, "speed_slow_a": 100.0, "accel_a": 300.0, "decel_a": 300.0,
-    "sensor_distance_a": 150.0, "ramp_stop_a": 150.0, "mu_a": 0.28,
+    "sensor_distance_a": 150.0, "ramp_stop_a": 2000.0, "mu_a": 0.28,
     "comparar": False,
     "speed_fast_b": 450.0, "speed_slow_b": 120.0, "accel_b": 400.0, "decel_b": 300.0,
     "sensor_distance_b": 150.0, "ramp_stop_b": 0.0, "mu_b": 0.28,
     "speed_fast_mesa": 45.0, "speed_slow_mesa": 10.0, "accel_mesa": 90.0, "decel_mesa": 90.0,
-    "ramp_stop_mesa": 100.0, "mu_mesa": 0.28,
+    "ramp_stop_mesa": 400.0, "mu_mesa": 0.28,
     "angle_total_mesa": 90.0, "pieza_longitud_mesa": 2110.0,
     "radio_sensor_mesa": 545.25,
     "sensor_distance_mm_mesa": 150.0,
@@ -73,7 +79,13 @@ st.sidebar.number_input("SPEED_AUTO_SLOW A (mm/s)", value=st.session_state.speed
 st.sidebar.number_input("RAMP_ACCEL A (mm/s²)", value=st.session_state.accel_a, step=50.0, key="accel_a")
 st.sidebar.number_input("RAMP_DECEL A (mm/s²)", value=st.session_state.decel_a, step=50.0, key="decel_a")
 st.sidebar.number_input("Distancia Sensor Reducción A (mm)", value=st.session_state.sensor_distance_a, step=25.0, key="sensor_distance_a")
-st.sidebar.number_input("RAMP_STOP A (ms)", value=st.session_state.ramp_stop_a, step=10.0, min_value=0.0, key="ramp_stop_a", help="Rampa de frenado en el sensor de paro")
+st.sidebar.number_input(
+    "RAMP_STOP A (mm/s²)", value=st.session_state.ramp_stop_a, step=100.0, min_value=0.0, key="ramp_stop_a",
+    help="Deceleración directamente comandada por el PLC para el frenado final — mismo tipo de parámetro que "
+         "RAMP_ACCEL / RAMP_DECEL (NO es un tiempo). Un piso mecánico (backlash de cadena, flexión de chasis) "
+         "limita la deceleración máxima físicamente alcanzable a v_slow / 20ms. Si se deja en 0, se asume que "
+         "el PLC no limita el frenado y el sistema se detiene tan rápido como mecánicamente es posible."
+)
 st.sidebar.number_input("Coeficiente Fricción μ A", value=st.session_state.mu_a, step=0.01, min_value=0.01, max_value=1.0, key="mu_a")
 
 st.sidebar.markdown("---")
@@ -96,7 +108,10 @@ if st.session_state.comparar:
     st.sidebar.number_input("RAMP_ACCEL B (mm/s²)", value=st.session_state.accel_b, step=50.0, key="accel_b")
     st.sidebar.number_input("RAMP_DECEL B (mm/s²)", value=st.session_state.decel_b, step=50.0, key="decel_b")
     st.sidebar.number_input("Distancia Sensor Reducción B (mm)", value=st.session_state.sensor_distance_b, step=25.0, key="sensor_distance_b")
-    st.sidebar.number_input("RAMP_STOP B (ms)", value=st.session_state.ramp_stop_b, step=10.0, min_value=0.0, key="ramp_stop_b")
+    st.sidebar.number_input(
+        "RAMP_STOP B (mm/s²)", value=st.session_state.ramp_stop_b, step=100.0, min_value=0.0, key="ramp_stop_b",
+        help="Igual que RAMP_STOP A — deceleración directa (mm/s²), no un tiempo. 0 = usar el máximo mecánico."
+    )
     st.sidebar.number_input("Coeficiente Fricción μ B", value=st.session_state.mu_b, step=0.01, min_value=0.01, max_value=1.0, key="mu_b")
 
 st.sidebar.markdown("---")
@@ -120,7 +135,12 @@ _sensor_angle_mesa_calc = mm_to_angle(
 )
 st.sidebar.caption(f"↳ Equivalente angular: **{_sensor_angle_mesa_calc:.3f}°** (modo: {_modo_actual.split(' —')[0]})")
 
-st.sidebar.number_input("RAMP_STOP MESA (ms)", value=st.session_state.ramp_stop_mesa, step=10.0, min_value=0.0, key="ramp_stop_mesa", help="Rampa de frenado angular en el sensor de paro")
+st.sidebar.number_input(
+    "RAMP_STOP MESA (°/s²)", value=st.session_state.ramp_stop_mesa, step=25.0, min_value=0.0, key="ramp_stop_mesa",
+    help="Deceleración angular directamente comandada por el PLC para el frenado final — mismo tipo de "
+         "parámetro que RAMP_ACCEL/RAMP_DECEL MESA (NO es un tiempo). Un piso mecánico limita la deceleración "
+         "angular máxima físicamente alcanzable a ω_slow / 20ms. Si se deja en 0, se asume el máximo mecánico."
+)
 st.sidebar.number_input("Coeficiente Fricción μ MESA", value=st.session_state.mu_mesa, step=0.01, min_value=0.01, max_value=1.0, key="mu_mesa")
 st.sidebar.number_input("Ángulo Total de Giro MESA (°)", value=st.session_state.angle_total_mesa, step=15.0, key="angle_total_mesa", help="Equivalente angular de 'Largo Total Conveyor' — abierto")
 st.sidebar.number_input("Longitud Total de Pieza MESA (mm)", value=st.session_state.pieza_longitud_mesa, step=10.0, min_value=1.0, key="pieza_longitud_mesa", help="La pieza se posiciona centrada en el eje de giro. R_max = Longitud / 2 (usado SOLO para el análisis de deslizamiento)")
@@ -129,7 +149,7 @@ st.sidebar.number_input("Longitud Total de Pieza MESA (mm)", value=st.session_st
 # ==========================================
 # REALISTIC KINEMATIC CALCULATION ENGINE (CONVEYOR LINEAL)
 # ==========================================
-def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, mu):
+def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_accel, mu):
     dt = 0.001
     t_max = 30.0
     steps = int(t_max / dt)
@@ -149,11 +169,20 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
     t_sensor_stop = 0.0
     t_fully_stopped = 0.0
 
-    T_MIN_MECANICO_MS = 20.0
-    ramp_stop_real_ms = max(ramp_stop_ms, T_MIN_MECANICO_MS)
+    # ---- RAMP_STOP es ahora una ACELERACIÓN directa (mm/s²), no un tiempo ----
+    a_mechanical_max = (v_slow / T_MIN_MECANICO_S) if v_slow > 0 else 0.0
 
-    a_stop_conveyor = v_slow / (ramp_stop_real_ms / 1000.0)
+    if ramp_stop_accel is None or ramp_stop_accel <= 0:
+        a_stop_conveyor = a_mechanical_max
+        mechanically_capped = False
+    else:
+        a_stop_conveyor = min(ramp_stop_accel, a_mechanical_max) if a_mechanical_max > 0 else ramp_stop_accel
+        mechanically_capped = (a_mechanical_max > 0) and (ramp_stop_accel > a_mechanical_max)
+
+    a_stop_conveyor = max(a_stop_conveyor, 1e-6)
+    ramp_stop_real_ms = (v_slow / a_stop_conveyor) * 1000.0 if a_stop_conveyor > 0 else 0.0
     g_conveyor = a_stop_conveyor / 9810.0
+
     g_max_pieza = mu
     a_max_pieza = mu * 9810.0
 
@@ -163,10 +192,8 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
         dist_needed_decel = 0.0
     insufficient_distance = dist_needed_decel > s_dist
 
-    # ---- NUEVO: Aceleración en Gs por cada transición de velocidad ----
-    g_accel = accel / 9810.0                  # ACCEL_FAST: arranque desde reposo
-    g_decel = decel / 9810.0                  # DECEL_TO_SLOW: frenado a velocidad de creep
-    # g_conveyor (calculado arriba) = DECEL_TO_STOP: frenado final
+    g_accel = accel / 9810.0
+    g_decel = decel / 9810.0
 
     se_desliza_accel = g_accel > mu
     se_desliza_decel = g_decel > mu
@@ -249,6 +276,8 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_ms, 
 
     details = {
         "ramp_stop_real_ms": ramp_stop_real_ms,
+        "a_mechanical_max": a_mechanical_max,
+        "mechanically_capped": mechanically_capped,
         "a_stop_conveyor": a_stop_conveyor,
         "a_max_pieza": a_max_pieza,
         "dist_freno_pieza": dist_freno_pieza,
@@ -298,7 +327,7 @@ if st.session_state.comparar:
 # ANGULAR KINEMATIC CALCULATION ENGINE (MESA GIRATORIA)
 # ==========================================
 def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
-                          angle_total, angle_sensor_dist, ramp_stop_ms, mu, r_max):
+                          angle_total, angle_sensor_dist, ramp_stop_alpha, mu, r_max):
     dt = 0.001
     t_max = 30.0
     steps = int(t_max / dt)
@@ -318,10 +347,19 @@ def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
     t_sensor_stop = 0.0
     t_fully_stopped = 0.0
 
-    T_MIN_MECANICO_MS = 20.0
-    ramp_stop_real_ms = max(ramp_stop_ms, T_MIN_MECANICO_MS)
+    # ---- RAMP_STOP MESA es ahora una ACELERACIÓN ANGULAR directa (°/s²), no un tiempo ----
+    alpha_mechanical_max = (omega_slow / T_MIN_MECANICO_S) if omega_slow > 0 else 0.0
 
-    alpha_stop = omega_slow / (ramp_stop_real_ms / 1000.0)
+    if ramp_stop_alpha is None or ramp_stop_alpha <= 0:
+        alpha_stop = alpha_mechanical_max
+        mechanically_capped_mesa = False
+    else:
+        alpha_stop = min(ramp_stop_alpha, alpha_mechanical_max) if alpha_mechanical_max > 0 else ramp_stop_alpha
+        mechanically_capped_mesa = (alpha_mechanical_max > 0) and (ramp_stop_alpha > alpha_mechanical_max)
+
+    alpha_stop = max(alpha_stop, 1e-6)
+    ramp_stop_real_ms = (omega_slow / alpha_stop) * 1000.0 if alpha_stop > 0 else 0.0
+
     alpha_stop_rad = np.radians(alpha_stop)
     a_tan_stop = alpha_stop_rad * r_max
     g_conv_mesa = a_tan_stop / 9810.0
@@ -442,6 +480,8 @@ def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
 
     details = {
         "ramp_stop_real_ms": ramp_stop_real_ms,
+        "alpha_mechanical_max": alpha_mechanical_max,
+        "mechanically_capped": mechanically_capped_mesa,
         "alpha_stop": alpha_stop,
         "a_tan_stop": a_tan_stop,
         "a_max_pieza": a_max_pieza,
@@ -517,6 +557,20 @@ with tab_sim:
             f"pero la `Distancia Sensor Reducción B` solo tiene **{st.session_state.sensor_distance_b:.1f} mm**."
         )
 
+    if det_a['mechanically_capped']:
+        st.info(
+            f"ℹ️ **Perfil A:** `RAMP_STOP A` configurado ({st.session_state.ramp_stop_a:.1f} mm/s²) excede el "
+            f"máximo mecánico alcanzable ({det_a['a_mechanical_max']:.1f} mm/s², limitado por el piso de "
+            f"{T_MIN_MECANICO_MS:.0f} ms). Se aplicó el límite mecánico: deceleración real = "
+            f"**{det_a['a_stop_conveyor']:.1f} mm/s²** (≈{det_a['ramp_stop_real_ms']:.1f} ms)."
+        )
+    if st.session_state.comparar and det_b['mechanically_capped']:
+        st.info(
+            f"ℹ️ **Perfil B:** `RAMP_STOP B` configurado ({st.session_state.ramp_stop_b:.1f} mm/s²) excede el "
+            f"máximo mecánico alcanzable ({det_b['a_mechanical_max']:.1f} mm/s²). Se aplicó el límite mecánico: "
+            f"deceleración real = **{det_b['a_stop_conveyor']:.1f} mm/s²** (≈{det_b['ramp_stop_real_ms']:.1f} ms)."
+        )
+
     # ---- GRÁFICA DE VELOCIDAD (LINEAL) ----
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=t_a, y=vel_a, mode='lines', name='Velocity Profile A',
@@ -567,20 +621,21 @@ with tab_sim:
     with st.expander(expander_title):
         st.markdown("### 🧮 Live Calculation Breakdown (Simulated Values)")
 
-        st.markdown("**Step 1: Effective Stop Ramp Time**")
+        st.markdown("**Step 1: Mechanical Maximum Deceleration (Floor Limit)**")
         st.latex(L(
-            f"t_{{~text{{stop~_real}}}} = ~max({st.session_state.ramp_stop_a:.1f}~,~text{{ms}}, "
-            f"20.0~,~text{{ms}}) = {det_a['ramp_stop_real_ms']:.1f}~,~text{{ms}} = "
-            f"{det_a['ramp_stop_real_ms']/1000.0:.3f}~,~text{{s}}"
+            f"a_{{~text{{mech,max}}}} = ~frac{{v_{{~text{{slow}}}}}}{{20~,~text{{ms}}}} = "
+            f"~frac{{{st.session_state.speed_slow_a:.1f}~,~text{{mm/s}}}}{{0.020~,~text{{s}}}} = "
+            f"~mathbf{{{det_a['a_mechanical_max']:.1f}~,~text{{mm/s}}^2}}"
         ))
 
-        st.markdown("**Step 2: Conveyor Stop Deceleration**")
+        st.markdown("**Step 2: Effective Stop Deceleration (RAMP_STOP capped by mechanical limit)**")
         st.latex(L(
-            f"a_{{~text{{stop}}}} = ~frac{{{st.session_state.speed_slow_a:.1f}~,~text{{mm/s}}}}"
-            f"{{{det_a['ramp_stop_real_ms']/1000.0:.3f}~,~text{{s}}}} = {det_a['a_stop_conveyor']:.2f}~,~text{{mm/s}}^2"
+            f"a_{{~text{{stop}}}} = ~min({st.session_state.ramp_stop_a:.1f}~,~text{{mm/s}}^2, "
+            f"{det_a['a_mechanical_max']:.1f}~,~text{{mm/s}}^2) = ~mathbf{{{det_a['a_stop_conveyor']:.1f}~,~text{{mm/s}}^2}} "
+            f"~quad (t~approx{det_a['ramp_stop_real_ms']:.1f}~,~text{{ms}})"
         ))
         st.latex(L(
-            f"g_{{~text{{conv}}}} = ~frac{{{det_a['a_stop_conveyor']:.2f}~,~text{{mm/s}}^2}}"
+            f"g_{{~text{{conv}}}} = ~frac{{{det_a['a_stop_conveyor']:.1f}~,~text{{mm/s}}^2}}"
             f"{{9810~,~text{{mm/s}}^2}} = ~mathbf{{{g_conv_a:.3f}~,~text{{G}}}}"
         ))
 
@@ -614,7 +669,7 @@ with tab_sim:
             )
 
     # ==========================================
-    # NUEVO: ACELERACIÓN EN GS POR TRANSICIÓN DE ESTADOS (PROFILE A)
+    # ACELERACIÓN EN GS POR TRANSICIÓN DE ESTADOS (PROFILE A)
     # ==========================================
     st.markdown("---")
     st.subheader("⚠️ Aceleración en Gs por Transición de Estados (Profile A)")
@@ -663,7 +718,7 @@ with tab_sim:
         ))
         st.latex(L(
             f"g_{{~text{{stop}}}} = ~frac{{a_{{~text{{stop}}}}}}{{9810}} = ~mathbf{{{g_conv_a:.3f}~,G}} ~quad "
-            f"~text{{(ya calculado en el frenado final)}}"
+            f"~text{{(ya calculado en el frenado final, con el piso mecánico aplicado si corresponde)}}"
         ))
 
     if st.session_state.comparar:
@@ -712,6 +767,14 @@ with tab_sim:
         f"para convertir posiciones de sensores entre grados y mm. Ambos sensores (Reducción y Paro) están "
         f"ubicados al final del recorrido angular, separados entre sí por la distancia configurada."
     )
+
+    if det_m['mechanically_capped']:
+        st.info(
+            f"ℹ️ **Mesa:** `RAMP_STOP MESA` configurado ({st.session_state.ramp_stop_mesa:.1f} °/s²) excede el "
+            f"máximo mecánico alcanzable ({det_m['alpha_mechanical_max']:.1f} °/s², limitado por el piso de "
+            f"{T_MIN_MECANICO_MS:.0f} ms). Se aplicó el límite mecánico: deceleración angular real = "
+            f"**{det_m['alpha_stop']:.1f} °/s²** (≈{det_m['ramp_stop_real_ms']:.1f} ms)."
+        )
 
     fig_mesa_vel = go.Figure()
     fig_mesa_vel.add_trace(go.Scatter(x=t_m, y=omega_m, mode='lines', name='Angular Velocity (Mesa)',
@@ -905,16 +968,18 @@ with tab_sim:
             f"{st.session_state.sensor_distance_mm_mesa:.1f}~,~text{{mm}} sobre riel R={R_sensor:.2f}~,~text{{mm}})}}"
         ))
 
-        st.markdown("**Paso 1: Tiempo de Rampa de Paro Efectivo**")
+        st.markdown("**Paso 1: Deceleración Angular Mecánica Máxima (Piso)**")
         st.latex(L(
-            f"t_{{~text{{stop~_real}}}} = ~max({st.session_state.ramp_stop_mesa:.1f}~,~text{{ms}}, 20.0~,~text{{ms}}) "
-            f"= {det_m['ramp_stop_real_ms']:.1f}~,~text{{ms}}"
+            f"~alpha_{{~text{{mech,max}}}} = ~frac{{~omega_{{~text{{slow}}}}}}{{20~,~text{{ms}}}} = "
+            f"~frac{{{st.session_state.speed_slow_mesa:.1f}~,°/s}}{{0.020~,~text{{s}}}} = "
+            f"~mathbf{{{det_m['alpha_mechanical_max']:.1f}~,°/s^2}}"
         ))
 
-        st.markdown("**Paso 2: Deceleración Angular Final y su Componente Tangencial en R_max**")
+        st.markdown("**Paso 2: Deceleración Angular Efectiva (RAMP_STOP MESA limitado por el piso mecánico)**")
         st.latex(L(
-            f"~alpha_{{~text{{stop}}}} = ~frac{{{st.session_state.speed_slow_mesa:.1f}~,°/s}}"
-            f"{{{det_m['ramp_stop_real_ms']/1000.0:.3f}~,s}} = {det_m['alpha_stop']:.2f}~,°/s^2"
+            f"~alpha_{{~text{{stop}}}} = ~min({st.session_state.ramp_stop_mesa:.1f}~,°/s^2, "
+            f"{det_m['alpha_mechanical_max']:.1f}~,°/s^2) = ~mathbf{{{det_m['alpha_stop']:.1f}~,°/s^2}} "
+            f"~quad (t~approx{det_m['ramp_stop_real_ms']:.1f}~,~text{{ms}})"
         ))
         st.latex(L(
             f"a_{{~text{{tan~_stop}}}} = ~alpha_{{~text{{stop}}}} ~cdot R_{{~text{{max}}}} "
@@ -955,11 +1020,25 @@ with tab_math:
         "deceleration forces, friction boundaries, and inertial displacement of transported parts."
     )
 
-    st.subheader("1. Mechanical Elasticity Floor")
-    st.latex(L(r"t_{~text{stop~_real}} = ~max~left(t_{~text{ramp~_stop}}, 20.0~,~text{ms}~right)"))
+    st.subheader("1. Mechanical Elasticity Floor (Maximum Achievable Deceleration)")
+    st.markdown(L(
+        "`RAMP_STOP` is a **directly commanded deceleration** (mm/s² or °/s²), consistent with "
+        "`RAMP_ACCEL`/`RAMP_DECEL` — it is NOT a time value. However, mechanical compliance (chain slack, "
+        "belt stretch, chassis flex) imposes a minimum stopping time of $T_{~text{min}} = 20~,~text{ms}$, "
+        "which translates into a **maximum physically achievable deceleration**:"
+    ))
+    st.latex(L(r"a_{~text{mech,max}} = ~frac{v_{~text{slow}}}{T_{~text{min}}}"))
 
-    st.subheader("2. Conveyor Stop Deceleration")
-    st.latex(L(r"a_{~text{stop}} = ~frac{v_{~text{slow}}}{t_{~text{stop~_real}}}"))
+    st.subheader("2. Effective Stop Deceleration")
+    st.markdown(L(
+        "The real applied deceleration is the commanded `RAMP_STOP`, capped by the mechanical maximum. "
+        "If `RAMP_STOP` is left at 0 (no explicit PLC limit), the system uses the fastest mechanically "
+        "possible stop:"
+    ))
+    st.latex(L(
+        r"a_{~text{stop}} = ~begin{cases} a_{~text{mech,max}} & ~text{RAMP~_STOP} = 0 \\\\ "
+        r"~min(~text{RAMP~_STOP}, a_{~text{mech,max}}) & ~text{RAMP~_STOP} > 0 ~end{cases}"
+    ))
     st.latex(L(r"g_{~text{conv}} = ~frac{a_{~text{stop}}}{9810}"))
 
     st.subheader("3. Static Friction Threshold & Slip Determination")
@@ -992,23 +1071,19 @@ with tab_math:
     st.latex(L(r"g_{~text{accel}} = ~frac{~text{RAMP~_ACCEL}}{9810} ~quad ~text{(ACCEL~_FAST, arranque)}"))
     st.latex(L(r"g_{~text{decel}} = ~frac{~text{RAMP~_DECEL}}{9810} ~quad ~text{(DECEL~_TO~_SLOW, frenado a creep)}"))
     st.latex(L(r"g_{~text{stop}} = ~frac{a_{~text{stop}}}{9810} ~quad ~text{(DECEL~_TO~_STOP, frenado final)}"))
-    st.markdown(L(
-        "The most critical phase is the one with the highest G among the three — not necessarily the final "
-        "stop, especially if RAMP_ACCEL or RAMP_DECEL are configured more aggressively than the final stop ramp:"
-    ))
     st.latex(L(r"g_{~text{max~_fase}} = ~max~left(g_{~text{accel}}, g_{~text{decel}}, g_{~text{stop}}~right)"))
-    st.markdown(L(
-        "This analysis is purely diagnostic — it does not alter the existing overrun/final-position "
-        "calculation, which remains based exclusively on the final stop deceleration, per the original "
-        "validated specification."
-    ))
 
     st.subheader("9. Turning Table: Angular-to-Linear Analogy")
     st.latex(L(r"R_{~text{max}} = ~frac{~text{Longitud Total de Pieza}}{2}"))
     st.latex(L(r"v_{~text{lineal}} = ~omega_{~text{rad}} ~cdot R_{~text{max}} ~quad a_{~text{lineal}} = ~alpha_{~text{rad}} ~cdot R_{~text{max}}"))
 
     st.subheader("10. Turning Table: Tangential Component (Braking)")
-    st.latex(L(r"~alpha_{~text{stop}} = ~frac{~omega_{~text{slow}}}{t_{~text{stop~_real}}} ~quad [°/s^2]"))
+    st.markdown(L("Same mechanical-floor logic as the linear conveyor, applied in the angular domain:"))
+    st.latex(L(r"~alpha_{~text{mech,max}} = ~frac{~omega_{~text{slow}}}{T_{~text{min}}} ~quad [°/s^2]"))
+    st.latex(L(
+        r"~alpha_{~text{stop}} = ~begin{cases} ~alpha_{~text{mech,max}} & ~text{RAMP~_STOP~_MESA} = 0 \\\\ "
+        r"~min(~text{RAMP~_STOP~_MESA}, ~alpha_{~text{mech,max}}) & ~text{RAMP~_STOP~_MESA} > 0 ~end{cases}"
+    ))
     st.latex(L(r"a_{~text{tan~_stop}} = ~alpha_{~text{stop,rad}} ~cdot R_{~text{max}} ~quad [~text{mm/s}^2]"))
     st.latex(L(r"g_{~text{conv}} = ~frac{a_{~text{tan~_stop}}}{9810}"))
 
@@ -1021,19 +1096,13 @@ with tab_math:
     st.latex(L(r"g_{~text{cent}} = ~frac{a_{~text{cent}}}{9810}"))
 
     st.subheader("12. Turning Table: Combined Resultant Acceleration at Critical Instants")
-    st.markdown(L(
-        "At the transitions between kinematic phases, the piece experiences BOTH tangential and centripetal "
-        "acceleration simultaneously (since $~omega ~neq 0$ at those exact moments). The true worst-case load "
-        "on the piece is the vector sum of both components:"
-    ))
     st.latex(L(r"a_{~text{resultante}} = ~sqrt{a_{~text{tangencial}}^2 + a_{~text{centrípeta}}^2}"))
 
     st.subheader("13. Scope Limitation: Free-Sliding Dynamics on a Rotating Frame")
     st.markdown(L(
         "A fully rigorous simulation of an object sliding freely on a rotating platform (once friction is "
         "exceeded) requires solving motion in a non-inertial rotating reference frame, which introduces "
-        "Coriolis and Euler pseudo-forces and generally results in a curved (non-radial) sliding path. This "
-        "simulator intentionally simplifies that scenario."
+        "Coriolis and Euler pseudo-forces. This simulator intentionally simplifies that scenario."
     ))
 
     st.subheader("14. Sensor Rail: Angular-to-Linear Conversion for Maintenance")
