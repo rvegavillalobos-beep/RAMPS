@@ -159,8 +159,8 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_acce
 
     p = 0.0
     v = 0.0
-    pos_sensor_red = length - s_dist   # Sensor de Reducción, medido hacia atrás desde el final
-    pos_stop = length                   # Sensor de Paro, al final absoluto
+    pos_sensor_red = length - s_dist
+    pos_stop = length
     state = "ACCEL_FAST"
 
     t_reach_fast = 0.0
@@ -169,7 +169,6 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_acce
     t_sensor_stop = 0.0
     t_fully_stopped = 0.0
 
-    # ---- RAMP_STOP es ahora una ACELERACIÓN directa (mm/s²), no un tiempo ----
     a_mechanical_max = (v_slow / T_MIN_MECANICO_S) if v_slow > 0 else 0.0
 
     if ramp_stop_accel is None or ramp_stop_accel <= 0:
@@ -347,7 +346,6 @@ def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
     t_sensor_stop = 0.0
     t_fully_stopped = 0.0
 
-    # ---- RAMP_STOP MESA es ahora una ACELERACIÓN ANGULAR directa (°/s²), no un tiempo ----
     alpha_mechanical_max = (omega_slow / T_MIN_MECANICO_S) if omega_slow > 0 else 0.0
 
     if ramp_stop_alpha is None or ramp_stop_alpha <= 0:
@@ -536,6 +534,10 @@ sensor_angle_mesa_actual = mm_to_angle(
     st.session_state.ramp_stop_mesa, st.session_state.mu_mesa, r_max_mesa
 )
 
+# ---- Ángulo acumulado en cada sensor (para anotaciones con tiempo + grados) ----
+theta_en_sensor_red = float(np.interp(t_red_m, t_m, theta_m))
+theta_en_sensor_stop = float(np.interp(t_stop_m, t_m, theta_m))
+
 
 tab_sim, tab_math = st.tabs(["📊 Simulation & Dashboard", "📚 Mathematical Background & Physics Engine"])
 
@@ -676,8 +678,7 @@ with tab_sim:
     st.caption(
         "El conveyor lineal tiene tres transiciones de velocidad donde la pieza experimenta aceleración: "
         "el arranque (ACCEL_FAST), el frenado a velocidad de creep (DECEL_TO_SLOW), y el frenado final "
-        "(DECEL_TO_STOP). Cada una se evalúa por separado contra μ — el criterio de posicionamiento/overrun "
-        "existente sigue basado exclusivamente en el frenado final, sin cambios."
+        "(DECEL_TO_STOP). Cada una se evalúa por separado contra μ."
     )
 
     fa1, fa2, fa3 = st.columns(3)
@@ -698,28 +699,12 @@ with tab_sim:
     if det_a['se_desliza_alguna_fase'] and not det_a['se_desliza_stop_fase']:
         st.warning(
             f"⚠️ **Diferencia detectada:** el frenado final está STABLE, pero **{det_a['peor_fase_label']}** "
-            f"presenta {det_a['g_max_fase']:.3f} G, que **supera** μ ({st.session_state.mu_a:.2f} G). "
-            f"La pieza podría deslizar en esa fase aunque el criterio de overrun/posicionamiento actual "
-            f"(basado solo en el frenado final) no lo capture."
+            f"presenta {det_a['g_max_fase']:.3f} G, que **supera** μ ({st.session_state.mu_a:.2f} G)."
         )
     elif det_a['se_desliza_alguna_fase']:
         st.error(f"🔴 Al menos una fase supera μ — la más crítica es **{det_a['peor_fase_label']}**.")
     else:
         st.success("🟢 Las tres transiciones de velocidad están dentro del límite de fricción.")
-
-    with st.expander("🔍 Ver Memoria de Cálculo — Aceleración por Fase (Profile A)"):
-        st.latex(L(
-            f"g_{{~text{{accel}}}} = ~frac{{~text{{RAMP~_ACCEL}}}}{{9810}} = "
-            f"~frac{{{st.session_state.accel_a:.1f}}}{{9810}} = ~mathbf{{{det_a['g_accel']:.3f}~,G}}"
-        ))
-        st.latex(L(
-            f"g_{{~text{{decel}}}} = ~frac{{~text{{RAMP~_DECEL}}}}{{9810}} = "
-            f"~frac{{{st.session_state.decel_a:.1f}}}{{9810}} = ~mathbf{{{det_a['g_decel']:.3f}~,G}}"
-        ))
-        st.latex(L(
-            f"g_{{~text{{stop}}}} = ~frac{{a_{{~text{{stop}}}}}}{{9810}} = ~mathbf{{{g_conv_a:.3f}~,G}} ~quad "
-            f"~text{{(ya calculado en el frenado final, con el piso mecánico aplicado si corresponde)}}"
-        ))
 
     if st.session_state.comparar:
         st.markdown("**⚖️ Comparación con Perfil B:**")
@@ -764,8 +749,7 @@ with tab_sim:
     st.caption(
         f"Pieza centrada en el eje de giro. R_max (deslizamiento) = Longitud/2 = {r_max_mesa:.1f} mm. "
         f"⚠️ Distinto del Radio Riel Sensores ({st.session_state.radio_sensor_mesa:.2f} mm), que solo se usa "
-        f"para convertir posiciones de sensores entre grados y mm. Ambos sensores (Reducción y Paro) están "
-        f"ubicados al final del recorrido angular, separados entre sí por la distancia configurada."
+        f"para convertir posiciones de sensores entre grados y mm."
     )
 
     if det_m['mechanically_capped']:
@@ -776,25 +760,75 @@ with tab_sim:
             f"**{det_m['alpha_stop']:.1f} °/s²** (≈{det_m['ramp_stop_real_ms']:.1f} ms)."
         )
 
+    # ---- GRÁFICA 1: VELOCIDAD ANGULAR (°/s) vs TIEMPO (s) ----
     fig_mesa_vel = go.Figure()
     fig_mesa_vel.add_trace(go.Scatter(x=t_m, y=omega_m, mode='lines', name='Angular Velocity (Mesa)',
                                        line=dict(color='#1f77b4', width=3)))
 
-    fig_mesa_vel.add_vline(x=t_red_m, line_width=2, line_dash="dot", line_color="#ff7f0e",
-                            annotation_text=f"Sensor Reducción Mesa · {t_red_m:.2f}s",
-                            annotation_position="top left", annotation_font_size=10, annotation_font_color="#ff7f0e")
-    fig_mesa_vel.add_vline(x=t_stop_m, line_width=2, line_dash="dash", line_color="#d62728",
-                            annotation_text=f"Sensor Paro Mesa · {t_stop_m:.2f}s",
-                            annotation_position="top right", annotation_font_size=10, annotation_font_color="#d62728")
+    fig_mesa_vel.add_vline(
+        x=t_red_m, line_width=2, line_dash="dot", line_color="#ff7f0e",
+        annotation_text=f"Sensor Reducción Mesa · {t_red_m:.2f}s · {theta_en_sensor_red:.2f}°",
+        annotation_position="top left", annotation_font_size=10, annotation_font_color="#ff7f0e"
+    )
+    fig_mesa_vel.add_vline(
+        x=t_stop_m, line_width=2, line_dash="dash", line_color="#d62728",
+        annotation_text=f"Sensor Paro Mesa · {t_stop_m:.2f}s · {theta_en_sensor_stop:.2f}°",
+        annotation_position="top right", annotation_font_size=10, annotation_font_color="#d62728"
+    )
 
     fig_mesa_vel.update_layout(
         title="Angular Velocity Profile (°/s) vs Time (s)",
         xaxis_title="Time (s)", yaxis_title="Angular Velocity (°/s)",
-        height=480, template="plotly_white", hovermode="x unified",
+        height=440, template="plotly_white", hovermode="x unified",
         legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="center", x=0.5, font=dict(size=10)),
         margin=dict(b=90, t=90)
     )
     st.plotly_chart(fig_mesa_vel, use_container_width=True)
+
+    # ---- NUEVA GRÁFICA 2: POSICIÓN ANGULAR (°) vs TIEMPO (s) ----
+    st.caption(
+        f"👇 Esta gráfica confirma cuántos **grados** ha girado la mesa en cada instante — el área bajo la "
+        f"curva de velocidad de arriba, integrada en el tiempo. Debe terminar en **{st.session_state.angle_total_mesa:.1f}°** "
+        f"(tu `Ángulo Total de Giro MESA`), más cualquier overrun."
+    )
+
+    fig_mesa_pos = go.Figure()
+    fig_mesa_pos.add_trace(go.Scatter(
+        x=t_m, y=theta_m, mode='lines', name='Angular Position θ(t) — Mesa',
+        line=dict(color='#2ca02c', width=3), fill='tozeroy', fillcolor='rgba(44,160,44,0.08)'
+    ))
+
+    fig_mesa_pos.add_hline(
+        y=st.session_state.angle_total_mesa, line_width=2, line_dash="dash", line_color="#d62728",
+        annotation_text=f"Ángulo Total MESA = {st.session_state.angle_total_mesa:.1f}°",
+        annotation_position="bottom right", annotation_font_size=10, annotation_font_color="#d62728"
+    )
+
+    fig_mesa_pos.add_vline(
+        x=t_red_m, line_width=2, line_dash="dot", line_color="#ff7f0e",
+        annotation_text=f"{t_red_m:.2f}s · {theta_en_sensor_red:.2f}°",
+        annotation_position="top left", annotation_font_size=10, annotation_font_color="#ff7f0e"
+    )
+    fig_mesa_pos.add_vline(
+        x=t_stop_m, line_width=2, line_dash="dash", line_color="#d62728",
+        annotation_text=f"{t_stop_m:.2f}s · {theta_en_sensor_stop:.2f}°",
+        annotation_position="top right", annotation_font_size=10, annotation_font_color="#d62728"
+    )
+
+    fig_mesa_pos.add_annotation(
+        x=t_m[-1], y=theta_m[-1], text=f"Final: {theta_m[-1]:.3f}°",
+        showarrow=True, arrowhead=2, ax=40, ay=-30,
+        font=dict(size=11, color="#2ca02c"), bgcolor="rgba(230,255,230,0.9)", bordercolor="#2ca02c"
+    )
+
+    fig_mesa_pos.update_layout(
+        title="Angular Position θ (°) vs Time (s)",
+        xaxis_title="Time (s)", yaxis_title="Angular Position (°)",
+        height=440, template="plotly_white", hovermode="x unified",
+        legend=dict(orientation="h", yanchor="top", y=-0.18, xanchor="center", x=0.5, font=dict(size=10)),
+        margin=dict(b=90, t=90)
+    )
+    st.plotly_chart(fig_mesa_pos, use_container_width=True)
 
     if det_m['insufficient_angle']:
         st.warning(
@@ -865,8 +899,8 @@ with tab_sim:
     st.subheader("⚠️ Aceleración Resultante en los Instantes Críticos (Tangencial + Centrípeta)")
     st.caption(
         "En los extremos entre fases, la pieza siente AMBAS componentes simultáneamente. El criterio de "
-        "'SLIPPING/STABLE' mostrado abajo sigue usando solo la componente tangencial en el frenado (para no "
-        "alterar el comportamiento ya validado) — este análisis adicional muestra el peor caso combinado real."
+        "'SLIPPING/STABLE' mostrado abajo sigue usando solo la componente tangencial en el frenado — este "
+        "análisis adicional muestra el peor caso combinado real."
     )
 
     res_cols = st.columns(4)
@@ -954,7 +988,7 @@ with tab_sim:
     if det_m['se_desliza_cruise_fast'] or det_m['se_desliza_cruise_slow']:
         st.error(
             "🔴 **Riesgo de deslizamiento en crucero detectado.** La fuerza centrípeta a esta velocidad angular "
-            "y radio supera la fricción disponible — la pieza podría deslizarse hacia afuera incluso sin frenar."
+            "y radio supera la fricción disponible."
         )
     else:
         st.success("🟢 La fuerza centrípeta en ambas velocidades de crucero está dentro del límite de fricción.")
@@ -1023,18 +1057,13 @@ with tab_math:
     st.subheader("1. Mechanical Elasticity Floor (Maximum Achievable Deceleration)")
     st.markdown(L(
         "`RAMP_STOP` is a **directly commanded deceleration** (mm/s² or °/s²), consistent with "
-        "`RAMP_ACCEL`/`RAMP_DECEL` — it is NOT a time value. However, mechanical compliance (chain slack, "
-        "belt stretch, chassis flex) imposes a minimum stopping time of $T_{~text{min}} = 20~,~text{ms}$, "
-        "which translates into a **maximum physically achievable deceleration**:"
+        "`RAMP_ACCEL`/`RAMP_DECEL` — it is NOT a time value. Mechanical compliance imposes a minimum "
+        "stopping time of $T_{~text{min}} = 20~,~text{ms}$, which translates into a maximum physically "
+        "achievable deceleration:"
     ))
     st.latex(L(r"a_{~text{mech,max}} = ~frac{v_{~text{slow}}}{T_{~text{min}}}"))
 
     st.subheader("2. Effective Stop Deceleration")
-    st.markdown(L(
-        "The real applied deceleration is the commanded `RAMP_STOP`, capped by the mechanical maximum. "
-        "If `RAMP_STOP` is left at 0 (no explicit PLC limit), the system uses the fastest mechanically "
-        "possible stop:"
-    ))
     st.latex(L(
         r"a_{~text{stop}} = ~begin{cases} a_{~text{mech,max}} & ~text{RAMP~_STOP} = 0 \\\\ "
         r"~min(~text{RAMP~_STOP}, a_{~text{mech,max}}) & ~text{RAMP~_STOP} > 0 ~end{cases}"
@@ -1053,10 +1082,6 @@ with tab_math:
     st.latex(L(r"~text{Factor de Seguridad} = ~frac{~mu}{g_{~text{conv}}}"))
 
     st.subheader("6. Sensor Layout: Both Sensors Near End of Travel")
-    st.markdown(L(
-        "Both the reduction sensor and the stop sensor are positioned near the **end** of the total travel "
-        "(linear or angular), separated from each other by the configured sensor distance:"
-    ))
     st.latex(L(r"P_{~text{stop}} = L_{~text{total}} ~quad P_{~text{reduction}} = L_{~text{total}} - S_{~text{distance}}"))
     st.latex(L(r"~theta_{~text{stop}} = ~theta_{~text{total}} ~quad ~theta_{~text{reduction}} = ~theta_{~text{total}} - ~theta_{~text{sensor~_dist}}"))
 
@@ -1064,21 +1089,27 @@ with tab_math:
     st.latex(L(r"d_{~text{needed}} = ~frac{v_{~text{fast}}^2 - v_{~text{slow}}^2}{2 ~cdot ~text{RAMP~_DECEL}}"))
 
     st.subheader("8. Linear Conveyor: Acceleration per State Transition")
-    st.markdown(L(
-        "Unlike the turning table, the linear conveyor has no centripetal component — each velocity "
-        "transition produces purely tangential (linear) acceleration, evaluated independently against $~mu$:"
-    ))
-    st.latex(L(r"g_{~text{accel}} = ~frac{~text{RAMP~_ACCEL}}{9810} ~quad ~text{(ACCEL~_FAST, arranque)}"))
-    st.latex(L(r"g_{~text{decel}} = ~frac{~text{RAMP~_DECEL}}{9810} ~quad ~text{(DECEL~_TO~_SLOW, frenado a creep)}"))
-    st.latex(L(r"g_{~text{stop}} = ~frac{a_{~text{stop}}}{9810} ~quad ~text{(DECEL~_TO~_STOP, frenado final)}"))
+    st.latex(L(r"g_{~text{accel}} = ~frac{~text{RAMP~_ACCEL}}{9810}"))
+    st.latex(L(r"g_{~text{decel}} = ~frac{~text{RAMP~_DECEL}}{9810}"))
+    st.latex(L(r"g_{~text{stop}} = ~frac{a_{~text{stop}}}{9810}"))
     st.latex(L(r"g_{~text{max~_fase}} = ~max~left(g_{~text{accel}}, g_{~text{decel}}, g_{~text{stop}}~right)"))
 
     st.subheader("9. Turning Table: Angular-to-Linear Analogy")
     st.latex(L(r"R_{~text{max}} = ~frac{~text{Longitud Total de Pieza}}{2}"))
     st.latex(L(r"v_{~text{lineal}} = ~omega_{~text{rad}} ~cdot R_{~text{max}} ~quad a_{~text{lineal}} = ~alpha_{~text{rad}} ~cdot R_{~text{max}}"))
 
-    st.subheader("10. Turning Table: Tangential Component (Braking)")
-    st.markdown(L("Same mechanical-floor logic as the linear conveyor, applied in the angular domain:"))
+    st.subheader("10. Turning Table: Angular Position via Time Integration")
+    st.markdown(L(
+        "The 'Angular Position θ(t) vs Time' chart integrates the angular velocity profile directly, confirming "
+        "the total configured rotation ($~theta_{~text{total}}$, e.g. 90°) is correctly reached:"
+    ))
+    st.latex(L(r"~theta(t) = ~int_0^t ~omega(~tau)~,d~tau"))
+    st.markdown(L(
+        "In the discrete simulation, this is simply the running sum $~theta_i = ~theta_{i-1} + ~omega_i ~cdot ~Delta t$ "
+        "already used to drive the state machine — the chart only visualizes it, it introduces no new physics."
+    ))
+
+    st.subheader("11. Turning Table: Tangential Component (Braking)")
     st.latex(L(r"~alpha_{~text{mech,max}} = ~frac{~omega_{~text{slow}}}{T_{~text{min}}} ~quad [°/s^2]"))
     st.latex(L(
         r"~alpha_{~text{stop}} = ~begin{cases} ~alpha_{~text{mech,max}} & ~text{RAMP~_STOP~_MESA} = 0 \\\\ "
@@ -1087,26 +1118,21 @@ with tab_math:
     st.latex(L(r"a_{~text{tan~_stop}} = ~alpha_{~text{stop,rad}} ~cdot R_{~text{max}} ~quad [~text{mm/s}^2]"))
     st.latex(L(r"g_{~text{conv}} = ~frac{a_{~text{tan~_stop}}}{9810}"))
 
-    st.subheader("11. Turning Table: Centripetal Component (Constant Speed Cruise)")
-    st.markdown(L(
-        "**This has no equivalent in the linear conveyor model.** Even at perfectly constant angular velocity, "
-        "any point at radius $R$ experiences a centripetal acceleration directed toward the rotation center:"
-    ))
+    st.subheader("12. Turning Table: Centripetal Component (Constant Speed Cruise)")
     st.latex(L(r"a_{~text{cent}} = ~omega_{~text{rad}}^2 ~cdot R_{~text{max}} ~quad [~text{mm/s}^2]"))
     st.latex(L(r"g_{~text{cent}} = ~frac{a_{~text{cent}}}{9810}"))
 
-    st.subheader("12. Turning Table: Combined Resultant Acceleration at Critical Instants")
+    st.subheader("13. Turning Table: Combined Resultant Acceleration at Critical Instants")
     st.latex(L(r"a_{~text{resultante}} = ~sqrt{a_{~text{tangencial}}^2 + a_{~text{centrípeta}}^2}"))
 
-    st.subheader("13. Scope Limitation: Free-Sliding Dynamics on a Rotating Frame")
+    st.subheader("14. Scope Limitation: Free-Sliding Dynamics on a Rotating Frame")
     st.markdown(L(
-        "A fully rigorous simulation of an object sliding freely on a rotating platform (once friction is "
-        "exceeded) requires solving motion in a non-inertial rotating reference frame, which introduces "
-        "Coriolis and Euler pseudo-forces. This simulator intentionally simplifies that scenario."
+        "A fully rigorous simulation of an object sliding freely on a rotating platform requires solving "
+        "motion in a non-inertial rotating reference frame, introducing Coriolis and Euler pseudo-forces."
     ))
 
-    st.subheader("14. Sensor Rail: Angular-to-Linear Conversion for Maintenance")
-    st.latex(L(r"~theta_{~text{sensor}} = ~frac{s_{~text{mm}}}{R_{~text{sensor}}} ~quad ~text{(Arco, en radianes, luego convertido a grados)}"))
+    st.subheader("15. Sensor Rail: Angular-to-Linear Conversion for Maintenance")
+    st.latex(L(r"~theta_{~text{sensor}} = ~frac{s_{~text{mm}}}{R_{~text{sensor}}} ~quad ~text{(Arco, radianes → grados)}"))
     st.latex(L(r"~theta_{~text{sensor}} = 2 ~arcsin~left(~frac{s_{~text{mm}}}{2R_{~text{sensor}}}~right) ~quad ~text{(Cuerda)}"))
     st.latex(L(r"s_{~text{arc}} = R_{~text{sensor}} ~cdot ~theta_{~text{rad}}"))
     st.latex(L(r"s_{~text{chord}} = 2R_{~text{sensor}} ~sin~left(~frac{~theta_{~text{rad}}}{2}~right)"))
