@@ -572,6 +572,79 @@ def bandas_fase(fig, segs, g_fase, mu, t_total, fila_etiquetas=2):
             )
 
 
+COL_OK_TXT = "#1e7b34"     # verde con mejor contraste para texto
+COL_BORDE_OK = "#9ca3af"
+
+
+def ticks_bonitos(lo, hi, max_ticks=5):
+    """Marcas 'redondas' solo en el rango de los datos (la franja de etiquetas queda sin rejilla)."""
+    span = hi - lo
+    if span <= 0:
+        return None
+    mag = 10 ** np.floor(np.log10(span / max_ticks))
+    for mult in (1, 2, 2.5, 5, 10):
+        paso = mult * mag
+        if span / paso <= max_ticks:
+            break
+    inicio = np.ceil(lo / paso - 1e-9) * paso
+    return [round(float(v), 6) for v in np.arange(inicio, hi + paso * 1e-6, paso)]
+
+
+def distribuir_x(deseadas, lo, hi, sep):
+    """Reparte etiquetas en una fila conservando su orden y con separación mínima entre centros."""
+    n = len(deseadas)
+    if n == 0:
+        return []
+    orden = np.argsort(deseadas, kind="stable")
+    x = np.clip(np.asarray(deseadas, dtype=float)[orden], lo, hi)
+    if n > 1:
+        sep = min(sep, (hi - lo) / (n - 1))
+        for i in range(1, n):
+            x[i] = max(x[i], x[i - 1] + sep)
+        if x[-1] > hi:
+            x[-1] = hi
+            for i in range(n - 2, -1, -1):
+                x[i] = min(x[i], x[i + 1] - sep)
+    out = np.empty(n)
+    out[orden] = x
+    return out.tolist()
+
+
+def texto_etiqueta(titulo, valor, desliza, detalle, color_titulo="#374151"):
+    color_val = COL_SLIP if desliza else COL_OK_TXT
+    return (f"<span style='color:{color_titulo}'><b>{titulo}</b></span><br>"
+            f"<span style='font-size:14px;color:{color_val}'><b>{valor}</b></span><br>"
+            f"<span style='font-size:10px;color:#6b7280'>{detalle}</span>")
+
+
+def fila_etiquetas(fig, items, y_fila, t_total, row=2):
+    """Dibuja una fila de etiquetas a la altura y_fila, cada una con flecha al punto de su fase."""
+    if not items or t_total <= 0:
+        return
+    xs = distribuir_x([it["x"] for it in items], 0.07 * t_total, 0.93 * t_total, 0.17 * t_total)
+    xr = "x" if row == 1 else f"x{row}"
+    yr = "y" if row == 1 else f"y{row}"
+    for it, x_lab in zip(items, xs):
+        borde = COL_SLIP if it["desliza"] else COL_BORDE_OK
+        fig.add_annotation(
+            x=it["x"], y=it["y"], xref=xr, yref=yr,
+            ax=x_lab, ay=y_fila, axref=xr, ayref=yr,
+            text=it["texto"], align="center", showarrow=True,
+            arrowhead=2, arrowsize=0.9, arrowwidth=1.2, arrowcolor=borde, standoff=3,
+            bgcolor="rgba(255,255,255,0.95)", bordercolor=borde,
+            borderwidth=2 if it.get("peor") else 1, borderpad=4,
+            font=dict(size=11, color="#1f2937"),
+        )
+
+
+def componentes_fase_mesa(m, g_cent, sg):
+    """(G tangencial, G centrípeta máx., G resultante máx.) de una fase — mismo criterio en gráfica y tabla."""
+    a, b = sg["i0"], sg["i1"]
+    tan = abs(np.radians(m["det"]["alpha_cmd"][b])) * m["r_max"] / 9810.0
+    cent = float(np.max(g_cent[a:b + 1]))
+    return tan, cent, float(np.sqrt(tan ** 2 + cent ** 2))
+
+
 def entrada_leyenda(fig, nombre, color, dash, **pos):
     """Entrada solo de leyenda (sensores, μ): no ocupa espacio en la gráfica ni afecta los ejes."""
     fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", name=nombre, hoverinfo="skip",
@@ -688,7 +761,7 @@ def figura_movimiento_mesa(m):
     nombres = np.array([FASE_NOMBRE[FASES[c]] for c in det["fase"]], dtype=object)
 
     fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True, row_heights=[0.58, 0.42], vertical_spacing=0.08,
+        rows=2, cols=1, shared_xaxes=True, row_heights=[0.46, 0.54], vertical_spacing=0.08,
         subplot_titles=("Velocidad angular de la mesa (°/s)",
                         f"Aceleración sobre la pieza en R_max = {m['r_max']:.0f} mm (G) — zona verde = dentro de μ"),
     )
@@ -714,17 +787,10 @@ def figura_movimiento_mesa(m):
     ), row=2, col=1)
 
     mu = m["mu"]
-    g_top = max(float(np.max(g_res)) if len(g_res) else 0.0, mu)
+    g_top = max(float(np.max(g_res)) if len(g_res) else 0.0, mu, 1e-3)
     fig.add_hrect(y0=0, y1=mu, fillcolor=COL_OK, opacity=0.08, line_width=0, layer="below", row=2, col=1)
     fig.add_hline(y=mu, line_width=2, line_dash="dash", line_color=COL_SLIP, row=2, col=1)
     entrada_leyenda(fig, f"Límite de fricción μ = {mu:.2f}", COL_SLIP, "dash", row=2, col=1)
-
-    i_max = int(np.argmax(g_res)) if len(g_res) else 0
-    fig.add_annotation(
-        x=t[i_max], y=g_res[i_max], xref="x2", yref="y2", text=f"Máx. {g_res[i_max]:.3f} G",
-        showarrow=True, arrowhead=2, ax=-55, ay=-20,
-        font=dict(size=10, color=COL_SLIP if g_res[i_max] > mu else COL_OK),
-    )
 
     for fila in (1, 2):
         fig.add_vline(x=m["t_red"], line_width=2, line_dash="dot", line_color=COL_SENSOR_RED, row=fila, col=1)
@@ -735,19 +801,34 @@ def figura_movimiento_mesa(m):
                     COL_SENSOR_STOP, "dash", row=1, col=1)
 
     segs = segmentos_fase(t, det["fase"])
+    comps = {id(sg): componentes_fase_mesa(m, g_cent, sg) for sg in segs}
+    t_total = float(t[-1])
+    bandas_fase(fig, segs, lambda sg: comps[id(sg)][2], mu, t_total, fila_etiquetas=1)
 
-    def g_fase(sg):
+    # ---- Etiquetas de valor por fase (resultante y sus componentes) ----
+    peor = max(segs, key=lambda sg: comps[id(sg)][2]) if segs else None
+    items = []
+    for sg in segs:
+        tan, cent, res = comps[id(sg)]
         a, b = sg["i0"], sg["i1"]
-        tan = abs(np.radians(det["alpha_cmd"][b])) * m["r_max"] / 9810.0
-        cent = float(np.max(g_cent[a:b + 1]))
-        return float(np.sqrt(tan ** 2 + cent ** 2))
+        j0 = a + 1 if b > a else b
+        tramo = g_res[j0:b + 1]
+        # Flecha al punto de máxima resultante; si la fase es constante, a su centro
+        j = (j0 + b) // 2 if np.ptp(tramo) < 1e-4 else j0 + int(np.argmax(tramo))
+        items.append({
+            "x": float(t[j]), "y": float(g_res[j]), "desliza": res > mu,
+            "peor": sg is peor and res > 0,
+            "texto": texto_etiqueta(FASE_CORTO[sg["fase"]], f"{res:.3f} G", res > mu,
+                                    f"tan {tan:.3f} · cen {cent:.3f}"),
+        })
+    fila_etiquetas(fig, items, y_fila=g_top * 1.55, t_total=t_total)
 
-    bandas_fase(fig, segs, g_fase, mu, float(t[-1]))
-
-    fig.update_yaxes(title_text="°/s", row=1, col=1)
-    fig.update_yaxes(title_text="G", range=[0, g_top * 1.4], row=2, col=1)
+    w_max = max(float(np.max(omega)) if len(omega) else 0.0, 1e-3)
+    fig.update_yaxes(title_text="°/s", range=[-0.04 * w_max, 1.2 * w_max], row=1, col=1)
+    fig.update_yaxes(title_text="G", range=[0, g_top * 1.95], tickvals=ticks_bonitos(0, g_top), row=2, col=1)
+    fig.update_xaxes(range=[0, t_total])
     fig.update_xaxes(title_text="Tiempo (s)", row=2, col=1)
-    leyenda_abajo(fig, 660)
+    leyenda_abajo(fig, 800)
     return fig
 
 
@@ -757,9 +838,7 @@ def tabla_fases_mesa(m):
     filas = []
     for sg in segmentos_fase(m["t"], det["fase"]):
         a, b = sg["i0"], sg["i1"]
-        tan = abs(np.radians(det["alpha_cmd"][b])) * m["r_max"] / 9810.0
-        cent = float(np.max(g_cent[a:b + 1]))
-        res = float(np.sqrt(tan ** 2 + cent ** 2))
+        tan, cent, res = componentes_fase_mesa(m, g_cent, sg)
         filas.append({
             "Fase": FASE_NOMBRE[sg["fase"]],
             "Estado PLC": sg["fase"],
@@ -874,8 +953,9 @@ def pagina_mesa():
     with tab_mov:
         st.plotly_chart(figura_movimiento_mesa(m))
         st.caption(
-            "Bandas: fases del PLC (gris = rampa, rojo = la aceleración resultante supera μ). "
-            "Pasa el cursor sobre la curva de velocidad para ver el ángulo acumulado θ y la fase en cada instante."
+            "Etiquetas: aceleración resultante máxima de cada fase y sus componentes tangencial (rampa) y "
+            "centrípeta (ω²·R) — verde = dentro de μ, rojo = supera μ, borde grueso = fase más crítica. "
+            "Bandas: fases del PLC. Pasa el cursor sobre la curva de velocidad para ver el ángulo θ en cada instante."
         )
 
         st.subheader("🎯 Posicionamiento y tiempo de ciclo")
@@ -1133,7 +1213,7 @@ def sidebar_conveyor():
 
 def figura_movimiento_conveyor(a, b=None):
     fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True, row_heights=[0.58, 0.42], vertical_spacing=0.08,
+        rows=2, cols=1, shared_xaxes=True, row_heights=[0.46, 0.54], vertical_spacing=0.08,
         subplot_titles=("Velocidad del conveyor (mm/s)",
                         "Aceleración sobre la pieza (G) — zona verde = dentro de μ"),
     )
@@ -1187,13 +1267,40 @@ def figura_movimiento_conveyor(a, b=None):
     # Fases del perfil A
     det_a = a["det"]
     segs = segmentos_fase(a["t"], det_a["fase"])
-    bandas_fase(fig, segs, lambda sg: abs(det_a["a_cmd"][sg["i1"]]) / 9810.0, mu_a, float(a["t"][-1]))
+    t_total = max(float(s["t"][-1]) for _, s, _, _ in perfiles)
+    bandas_fase(fig, segs, lambda sg: abs(det_a["a_cmd"][sg["i1"]]) / 9810.0, mu_a, t_total, fila_etiquetas=1)
 
-    g_top = max(g_abs_max, mu_max)
-    fig.update_yaxes(title_text="mm/s", row=1, col=1)
-    fig.update_yaxes(title_text="G", range=[-g_top * 1.25, g_top * 1.5], row=2, col=1)
+    # ---- Etiquetas de valor por rampa: aceleraciones arriba, deceleraciones abajo ----
+    g_top = max(g_abs_max, mu_max, 1e-3)
+    arriba, abajo = [], []
+    for nombre, s, color, _ in perfiles:
+        det = s["det"]
+        rampas = [sg for sg in segmentos_fase(s["t"], det["fase"]) if abs(det["a_cmd"][sg["i1"]]) > 0]
+        peor = max(rampas, key=lambda sg: abs(det["a_cmd"][sg["i1"]])) if rampas else None
+        for sg in rampas:
+            a_val = float(det["a_cmd"][sg["i1"]])
+            g = a_val / 9810.0
+            desliza = abs(g) > s["mu"]
+            dur = sg["t1"] - sg["t0"]
+            dur_txt = f"{dur * 1000:.0f} ms" if dur < 0.1 else f"{dur:.2f} s"
+            titulo = f"{nombre} · {FASE_CORTO[sg['fase']]}" if b is not None else FASE_CORTO[sg["fase"]]
+            item = {
+                "x": (sg["t0"] + sg["t1"]) / 2, "y": g, "desliza": desliza, "peor": sg is peor,
+                "texto": texto_etiqueta(titulo, f"{g:+.3f} G".replace("-", "−"), desliza,
+                                        f"{abs(a_val):.0f} mm/s² · {dur_txt}",
+                                        color_titulo=color if b is not None else "#374151"),
+            }
+            (arriba if g > 0 else abajo).append(item)
+    fila_etiquetas(fig, arriba, y_fila=g_top * 1.7, t_total=t_total)
+    fila_etiquetas(fig, abajo, y_fila=-g_top * 1.7, t_total=t_total)
+
+    v_max = max(max(float(np.max(s["vel"])) for _, s, _, _ in perfiles), 1e-3)
+    fig.update_yaxes(title_text="mm/s", range=[-0.04 * v_max, 1.2 * v_max], row=1, col=1)
+    fig.update_yaxes(title_text="G", range=[-g_top * 2.3, g_top * 2.3],
+                     tickvals=ticks_bonitos(-g_top, g_top, max_ticks=6), row=2, col=1)
+    fig.update_xaxes(range=[0, t_total])
     fig.update_xaxes(title_text="Tiempo (s)", row=2, col=1)
-    leyenda_abajo(fig, 680)
+    leyenda_abajo(fig, 800)
     return fig
 
 
@@ -1327,8 +1434,9 @@ def pagina_conveyor():
     with tab_mov:
         st.plotly_chart(figura_movimiento_conveyor(A, B))
         st.caption(
-            "Bandas: fases del PLC del Perfil A (gris = rampa, rojo = la aceleración supera μ). "
-            "Pasa el cursor sobre la curva de velocidad para ver la posición x y la fase en cada instante."
+            "Etiquetas: aceleración de cada rampa en G, con la aceleración efectiva (mm/s²) y su duración — "
+            "verde = dentro de μ, rojo = supera μ, borde grueso = fase más crítica. En crucero la aceleración es 0 G. "
+            "Bandas: fases del PLC del Perfil A. Pasa el cursor sobre la curva de velocidad para ver la posición x."
         )
 
         st.subheader("🎯 Posicionamiento y tiempo de ciclo (Perfil A)")
