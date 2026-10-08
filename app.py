@@ -10,7 +10,7 @@ BS = chr(92)
 
 
 def L(template: str) -> str:
-    """Reemplaza '~' por un backslash real para construir LaTeX válido."""
+    """Replaces '~' with a real backslash to build valid LaTeX."""
     return template.replace("~", BS)
 
 
@@ -18,26 +18,26 @@ def L(template: str) -> str:
 # PAGE CONFIGURATION
 # ==========================================
 st.set_page_config(
-    page_title="Simulador Cinemático — Mesa Giratoria y Conveyor",
+    page_title="Kinematic Simulator — Turntable & Conveyor",
     page_icon="⚙️",
     layout="wide",
 )
 
 # ==========================================
-# CONVERSIÓN ÁNGULO <-> MM SOBRE UN RIEL A RADIO FIJO
+# ANGLE <-> MM CONVERSION ON A FIXED-RADIUS RAIL
 # ==========================================
-def angle_to_mm(angle_deg, radius, mode="Arco (R·θ)"):
+def angle_to_mm(angle_deg, radius, mode="Arc (R·θ)"):
     theta_rad = np.radians(angle_deg)
-    if mode.startswith("Arco"):
+    if mode.startswith("Arc"):
         return radius * theta_rad
     else:
         return 2.0 * radius * np.sin(theta_rad / 2.0)
 
 
-def mm_to_angle(mm, radius, mode="Arco (R·θ)"):
+def mm_to_angle(mm, radius, mode="Arc (R·θ)"):
     if radius <= 0:
         return 0.0
-    if mode.startswith("Arco"):
+    if mode.startswith("Arc"):
         theta_rad = mm / radius
     else:
         ratio = np.clip(mm / (2.0 * radius), -1.0, 1.0)
@@ -46,12 +46,12 @@ def mm_to_angle(mm, radius, mode="Arco (R·θ)"):
 
 
 # ==========================================
-# CONSTANTES
+# CONSTANTS
 # ==========================================
 T_MIN_MECANICO_MS = 20.0
 T_MIN_MECANICO_S = T_MIN_MECANICO_MS / 1000.0
 
-# Colores (consistentes en toda la app)
+# Colors (consistent across the app)
 COL_A = "#1f77b4"
 COL_B = "#9467bd"
 COL_SENSOR_RED = "#ff7f0e"
@@ -62,20 +62,20 @@ COL_TAN = "#ff7f0e"
 COL_CENT = "#17becf"
 COL_NEUTRO = "#7f7f7f"
 
-# Estados de la máquina de estados del PLC (mismo orden en ambos motores)
+# PLC state machine states (same order in both engines)
 FASES = ["ACCEL_FAST", "CRUISE_FAST", "DECEL_TO_SLOW", "CRUISE_SLOW", "DECEL_TO_STOP", "DONE"]
 FASE_CODE = {f: i for i, f in enumerate(FASES)}
 FASE_NOMBRE = {
-    "ACCEL_FAST": "Arranque",
-    "CRUISE_FAST": "Crucero rápido",
-    "DECEL_TO_SLOW": "Frenado a creep",
-    "CRUISE_SLOW": "Crucero lento (creep)",
-    "DECEL_TO_STOP": "Frenado final",
-    "DONE": "Detenido",
+    "ACCEL_FAST": "Start-up",
+    "CRUISE_FAST": "Fast cruise",
+    "DECEL_TO_SLOW": "Braking to creep",
+    "CRUISE_SLOW": "Slow cruise (creep)",
+    "DECEL_TO_STOP": "Final stop",
+    "DONE": "Stopped",
 }
 FASE_CORTO = {
     "ACCEL_FAST": "ACCEL",
-    "CRUISE_FAST": "CRUCERO",
+    "CRUISE_FAST": "CRUISE",
     "DECEL_TO_SLOW": "DECEL",
     "CRUISE_SLOW": "CREEP",
     "DECEL_TO_STOP": "STOP",
@@ -96,18 +96,22 @@ defaults = {
     "angle_total_mesa": 90.0, "pieza_longitud_mesa": 2110.0,
     "radio_sensor_mesa": 545.25,
     "sensor_distance_mm_mesa": 150.0,
-    "modo_conversion_mesa": "Arco (R·θ) — recomendado",
+    "modo_conversion_mesa": "Arc (R·θ) — recommended",
 }
-# Re-asignar cada valor en cada ejecución hace que los parámetros persistan al cambiar
-# de sección (Streamlit descarta el estado de los widgets que no se dibujan en la página activa).
+MODOS_CONVERSION = ["Arc (R·θ) — recommended", "Chord (2R·sin(θ/2))"]
+# Re-assigning every value on each run keeps the parameters when switching sections
+# (Streamlit drops the state of widgets that are not drawn on the active page).
 for key, val in defaults.items():
     st.session_state[key] = st.session_state.get(key, val)
+# Sessions started on the Spanish version may hold the old option text
+if st.session_state.modo_conversion_mesa not in MODOS_CONVERSION:
+    st.session_state.modo_conversion_mesa = MODOS_CONVERSION[0 if str(st.session_state.modo_conversion_mesa).startswith("Arc") else 1]
 if "_comparar_prev" not in st.session_state:
     st.session_state._comparar_prev = False
 
 
 # ==========================================
-# REALISTIC KINEMATIC CALCULATION ENGINE (CONVEYOR LINEAL)
+# REALISTIC KINEMATIC CALCULATION ENGINE (LINEAR CONVEYOR)
 # ==========================================
 @st.cache_data(show_spinner=False)
 def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_accel, mu):
@@ -117,7 +121,7 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_acce
     t = np.zeros(steps)
     pos = np.zeros(steps)
     vel = np.zeros(steps)
-    # Registro por paso: estado que gobernó el paso y aceleración comandada (mm/s²)
+    # Per-step log: state that governed the step and commanded acceleration (mm/s²)
     fase = np.zeros(steps, dtype=np.int8)
     a_cmd = np.zeros(steps)
     a_cmd[0] = accel
@@ -164,9 +168,9 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_acce
     se_desliza_stop_fase = g_conveyor > mu
 
     fases_g = {
-        "ACCEL_FAST (arranque)": g_accel,
-        "DECEL_TO_SLOW (frenado a creep)": g_decel,
-        "DECEL_TO_STOP (frenado final)": g_conveyor,
+        "ACCEL_FAST (start-up)": g_accel,
+        "DECEL_TO_SLOW (braking to creep)": g_decel,
+        "DECEL_TO_STOP (final stop)": g_conveyor,
     }
     peor_fase_label = max(fases_g, key=fases_g.get)
     g_max_fase = fases_g[peor_fase_label]
@@ -285,7 +289,7 @@ def calcular_perfil(v_fast, v_slow, accel, decel, length, s_dist, ramp_stop_acce
 
 
 # ==========================================
-# ANGULAR KINEMATIC CALCULATION ENGINE (MESA GIRATORIA)
+# ANGULAR KINEMATIC CALCULATION ENGINE (TURNTABLE)
 # ==========================================
 @st.cache_data(show_spinner=False)
 def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
@@ -296,7 +300,7 @@ def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
     t = np.zeros(steps)
     theta = np.zeros(steps)
     omega = np.zeros(steps)
-    # Registro por paso: estado que gobernó el paso y aceleración angular comandada (°/s²)
+    # Per-step log: state that governed the step and commanded angular acceleration (°/s²)
     fase = np.zeros(steps, dtype=np.int8)
     alpha_cmd = np.zeros(steps)
     alpha_cmd[0] = alpha_accel
@@ -357,17 +361,17 @@ def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
     g_res_ini_stop = a_res_ini_stop / 9810.0
 
     resultantes = {
-        "Fin de ACCEL_FAST (ω=ω_fast, tan=accel)": g_res_fin_accel,
-        "Inicio de DECEL_TO_SLOW (ω=ω_fast, tan=decel)": g_res_ini_decel,
-        "Fin de DECEL_TO_SLOW (ω=ω_slow, tan=decel)": g_res_fin_decel,
-        "Inicio de DECEL_TO_STOP (ω=ω_slow, tan=stop)": g_res_ini_stop,
+        "End of ACCEL_FAST (ω=ω_fast, tan=accel)": g_res_fin_accel,
+        "Start of DECEL_TO_SLOW (ω=ω_fast, tan=decel)": g_res_ini_decel,
+        "End of DECEL_TO_SLOW (ω=ω_slow, tan=decel)": g_res_fin_decel,
+        "Start of DECEL_TO_STOP (ω=ω_slow, tan=stop)": g_res_ini_stop,
     }
-    # Componentes (tangencial, centrípeta) en G de cada instante crítico — para graficar
+    # Components (tangential, centripetal) in G at each critical instant — for plotting
     componentes = {
-        "Fin de ACCEL_FAST (ω=ω_fast, tan=accel)": (a_accel_lineal / 9810.0, g_cent_fast),
-        "Inicio de DECEL_TO_SLOW (ω=ω_fast, tan=decel)": (a_decel_lineal / 9810.0, g_cent_fast),
-        "Fin de DECEL_TO_SLOW (ω=ω_slow, tan=decel)": (a_decel_lineal / 9810.0, g_cent_slow),
-        "Inicio de DECEL_TO_STOP (ω=ω_slow, tan=stop)": (g_conv_mesa, g_cent_slow),
+        "End of ACCEL_FAST (ω=ω_fast, tan=accel)": (a_accel_lineal / 9810.0, g_cent_fast),
+        "Start of DECEL_TO_SLOW (ω=ω_fast, tan=decel)": (a_decel_lineal / 9810.0, g_cent_fast),
+        "End of DECEL_TO_SLOW (ω=ω_slow, tan=decel)": (a_decel_lineal / 9810.0, g_cent_slow),
+        "Start of DECEL_TO_STOP (ω=ω_slow, tan=stop)": (g_conv_mesa, g_cent_slow),
     }
     peor_caso_label = max(resultantes, key=resultantes.get)
     g_res_max = resultantes[peor_caso_label]
@@ -507,19 +511,20 @@ def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
             g_conv_mesa, se_desliza_stop, deslizamiento_mm_stop, details)
 
 
+
 # ==========================================
-# AYUDAS DE PRESENTACIÓN
+# PRESENTATION HELPERS
 # ==========================================
 def fmt_fs(fs):
     return "∞" if fs == float('inf') else f"{fs:.2f}x"
 
 
 def estado_txt(desliza):
-    return "🔴 DESLIZA" if desliza else "🟢 ESTABLE"
+    return "🔴 SLIPPING" if desliza else "🟢 STABLE"
 
 
 def indices_grafica(fase, paso=5):
-    """Submuestrea para graficar sin perder los cambios de fase (las curvas son lineales por tramos)."""
+    """Downsample for plotting without losing phase changes (curves are piecewise linear)."""
     n = len(fase)
     if n <= 2:
         return np.arange(n)
@@ -533,7 +538,7 @@ def indices_grafica(fase, paso=5):
 
 
 def segmentos_fase(t, fase):
-    """Tramos contiguos de cada estado del PLC: índice de inicio/fin y tiempos."""
+    """Contiguous stretches of each PLC state: start/end index and times."""
     segs = []
     n = len(fase)
     if n == 0:
@@ -545,14 +550,14 @@ def segmentos_fase(t, fase):
         nombre = FASES[int(fase[s])]
         if nombre == "DONE":
             continue
-        i0 = max(int(s) - 1, 0)  # instante en que arranca la fase
-        i1 = int(e) - 1          # último paso gobernado por la fase
+        i0 = max(int(s) - 1, 0)  # instant the phase begins
+        i1 = int(e) - 1          # last step governed by the phase
         segs.append({"fase": nombre, "i0": i0, "i1": i1, "t0": float(t[i0]), "t1": float(t[i1])})
     return segs
 
 
 def bandas_fase(fig, segs, g_fase, mu, t_total, fila_etiquetas=2):
-    """Sombrea cada fase en ambas filas (rojo si supera μ) y la rotula en la fila indicada."""
+    """Shade each phase on both rows (red if it exceeds μ) and name it on the given row."""
     xref = "x" if fila_etiquetas == 1 else f"x{fila_etiquetas}"
     yref = "y domain" if fila_etiquetas == 1 else f"y{fila_etiquetas} domain"
     for sg in segs:
@@ -572,12 +577,12 @@ def bandas_fase(fig, segs, g_fase, mu, t_total, fila_etiquetas=2):
             )
 
 
-COL_OK_TXT = "#1e7b34"     # verde con mejor contraste para texto
+COL_OK_TXT = "#1e7b34"     # darker green for better text contrast
 COL_BORDE_OK = "#9ca3af"
 
 
 def ticks_bonitos(lo, hi, max_ticks=5):
-    """Marcas 'redondas' solo en el rango de los datos (la franja de etiquetas queda sin rejilla)."""
+    """'Round' ticks only over the data range (the label strip stays free of gridlines)."""
     span = hi - lo
     if span <= 0:
         return None
@@ -591,7 +596,7 @@ def ticks_bonitos(lo, hi, max_ticks=5):
 
 
 def distribuir_x(deseadas, lo, hi, sep):
-    """Reparte etiquetas en una fila conservando su orden y con separación mínima entre centros."""
+    """Spread labels along one row, keeping their order and a minimum spacing between centers."""
     n = len(deseadas)
     if n == 0:
         return []
@@ -618,7 +623,7 @@ def texto_etiqueta(titulo, valor, desliza, detalle, color_titulo="#374151"):
 
 
 def fila_etiquetas(fig, items, y_fila, t_total, row=2):
-    """Dibuja una fila de etiquetas a la altura y_fila, cada una con flecha al punto de su fase."""
+    """Draw one row of labels at height y_fila, each with an arrow to the point of its phase."""
     if not items or t_total <= 0:
         return
     xs = distribuir_x([it["x"] for it in items], 0.07 * t_total, 0.93 * t_total, 0.17 * t_total)
@@ -638,7 +643,7 @@ def fila_etiquetas(fig, items, y_fila, t_total, row=2):
 
 
 def componentes_fase_mesa(m, g_cent, sg):
-    """(G tangencial, G centrípeta máx., G resultante máx.) de una fase — mismo criterio en gráfica y tabla."""
+    """(tangential G, max centripetal G, max resultant G) of a phase — same criterion for chart and table."""
     a, b = sg["i0"], sg["i1"]
     tan = abs(np.radians(m["det"]["alpha_cmd"][b])) * m["r_max"] / 9810.0
     cent = float(np.max(g_cent[a:b + 1]))
@@ -646,7 +651,7 @@ def componentes_fase_mesa(m, g_cent, sg):
 
 
 def entrada_leyenda(fig, nombre, color, dash, **pos):
-    """Entrada solo de leyenda (sensores, μ): no ocupa espacio en la gráfica ni afecta los ejes."""
+    """Legend-only entry (sensors, μ): takes no space on the plot and does not affect the axes."""
     fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", name=nombre, hoverinfo="skip",
                              line=dict(color=color, width=2, dash=dash)), **pos)
 
@@ -660,7 +665,7 @@ def leyenda_abajo(fig, height, legend_y=-0.1):
 
 
 # ==========================================
-# SIMULACIONES (envoltorios que leen los parámetros de la sesión)
+# SIMULATIONS (wrappers that read the session parameters)
 # ==========================================
 def simular_conveyor(sufijo):
     ss = st.session_state
@@ -676,7 +681,7 @@ def simular_conveyor(sufijo):
 
 
 def modo_conversion_key():
-    return "Arco (R·θ)" if st.session_state.modo_conversion_mesa.startswith("Arco") else "Cuerda (2R·sin(θ/2))"
+    return "Arc (R·θ)" if st.session_state.modo_conversion_mesa.startswith("Arc") else "Chord (2R·sin(θ/2))"
 
 
 def simular_mesa():
@@ -697,7 +702,7 @@ def simular_mesa():
 
 
 def series_g_mesa(m):
-    """G tangencial, centrípeta y resultante en R_max para cada instante de la simulación."""
+    """Tangential, centripetal and resultant G at R_max for every instant of the simulation."""
     r = m["r_max"]
     g_tan = np.abs(np.radians(m["det"]["alpha_cmd"])) * r / 9810.0
     g_cent = (np.radians(m["omega"]) ** 2) * r / 9810.0
@@ -706,51 +711,52 @@ def series_g_mesa(m):
 
 
 # ==========================================
-# PÁGINA: MESA GIRATORIA
+# PAGE: TURNTABLE
 # ==========================================
 def sidebar_mesa():
     sb = st.sidebar
-    sb.header("🔄 Parámetros — Mesa giratoria")
+    sb.header("🔄 Parameters — Turntable")
 
-    sb.subheader("Cinemática (PLC)")
-    sb.number_input("SPEED_AUTO_FAST MESA (°/s)", step=5.0, key="speed_fast_mesa")
-    sb.number_input("SPEED_AUTO_SLOW MESA (°/s)", step=1.0, key="speed_slow_mesa")
-    sb.number_input("RAMP_ACCEL MESA (°/s²)", step=10.0, key="accel_mesa")
-    sb.number_input("RAMP_DECEL MESA (°/s²)", step=10.0, key="decel_mesa")
+    sb.subheader("Kinematics (PLC)")
+    sb.number_input("SPEED_AUTO_FAST TABLE (°/s)", step=5.0, key="speed_fast_mesa")
+    sb.number_input("SPEED_AUTO_SLOW TABLE (°/s)", step=1.0, key="speed_slow_mesa")
+    sb.number_input("RAMP_ACCEL TABLE (°/s²)", step=10.0, key="accel_mesa")
+    sb.number_input("RAMP_DECEL TABLE (°/s²)", step=10.0, key="decel_mesa")
     sb.number_input(
-        "RAMP_STOP MESA (°/s²)", step=25.0, min_value=0.0, key="ramp_stop_mesa",
-        help="Deceleración angular directamente comandada por el PLC para el frenado final — mismo tipo de "
-             "parámetro que RAMP_ACCEL/RAMP_DECEL MESA (NO es un tiempo). Un piso mecánico limita la deceleración "
-             "angular máxima físicamente alcanzable a ω_slow / 20ms. Si se deja en 0, se asume el máximo mecánico."
+        "RAMP_STOP TABLE (°/s²)", step=25.0, min_value=0.0, key="ramp_stop_mesa",
+        help="Angular deceleration commanded directly by the PLC for the final stop — same kind of "
+             "parameter as RAMP_ACCEL/RAMP_DECEL TABLE (NOT a time). A mechanical floor limits the maximum "
+             "physically achievable angular deceleration to ω_slow / 20 ms. If left at 0, the mechanical "
+             "maximum is assumed."
     )
-    sb.number_input("Ángulo Total de Giro MESA (°)", step=15.0, key="angle_total_mesa",
-                    help="Equivalente angular de 'Largo Total Conveyor' — abierto")
+    sb.number_input("Total Rotation Angle TABLE (°)", step=15.0, key="angle_total_mesa",
+                    help="Angular equivalent of 'Total Conveyor Length' — open")
 
-    sb.subheader("Sensores sobre el riel")
-    sb.number_input("Radio Riel Sensores MESA (mm)", step=5.0, min_value=1.0, key="radio_sensor_mesa",
-                    help="Radio físico donde están montados los sensores de reducción/paro sobre el riel — "
-                         "distinto del radio de la pieza")
+    sb.subheader("Sensors on the rail")
+    sb.number_input("Sensor Rail Radius TABLE (mm)", step=5.0, min_value=1.0, key="radio_sensor_mesa",
+                    help="Physical radius where the slowdown/stop sensors are mounted on the rail — "
+                         "different from the part radius")
     sb.radio(
-        "Fórmula de conversión Ángulo ↔ mm",
-        ["Arco (R·θ) — recomendado", "Cuerda (2R·sin(θ/2))"],
+        "Angle ↔ mm conversion formula",
+        MODOS_CONVERSION,
         key="modo_conversion_mesa",
-        help="Arco = distancia exacta si el riel sigue la curvatura a ese radio (caso típico). "
-             "Cuerda = distancia recta entre dos puntos del círculo (útil si el riel es perfectamente recto)."
+        help="Arc = exact distance if the rail follows the curvature at that radius (typical case). "
+             "Chord = straight-line distance between two points on the circle (useful if the rail is perfectly straight)."
     )
     sb.number_input(
-        "Distancia Sensor Reducción MESA (mm)", step=5.0, min_value=0.0, key="sensor_distance_mm_mesa",
-        help="Separación física, medida sobre el riel, entre el Sensor de Reducción y el Sensor de Paro. "
-             "Ambos sensores están ubicados cerca del final del recorrido angular total."
+        "Slowdown Sensor Distance TABLE (mm)", step=5.0, min_value=0.0, key="sensor_distance_mm_mesa",
+        help="Physical separation, measured along the rail, between the Slowdown Sensor and the Stop Sensor. "
+             "Both sensors are located near the end of the total angular travel."
     )
     _ang = mm_to_angle(st.session_state.sensor_distance_mm_mesa, st.session_state.radio_sensor_mesa,
                        modo_conversion_key())
-    sb.caption(f"↳ Equivalente angular: **{_ang:.3f}°** (modo: {modo_conversion_key()})")
+    sb.caption(f"↳ Angular equivalent: **{_ang:.3f}°** (mode: {modo_conversion_key()})")
 
-    sb.subheader("Pieza")
-    sb.number_input("Longitud Total de Pieza MESA (mm)", step=10.0, min_value=1.0, key="pieza_longitud_mesa",
-                    help="La pieza se posiciona centrada en el eje de giro. R_max = Longitud / 2 "
-                         "(usado SOLO para el análisis de deslizamiento)")
-    sb.number_input("Coeficiente Fricción μ MESA", step=0.01, min_value=0.01, max_value=1.0, key="mu_mesa")
+    sb.subheader("Part")
+    sb.number_input("Total Part Length TABLE (mm)", step=10.0, min_value=1.0, key="pieza_longitud_mesa",
+                    help="The part is centered on the rotation axis. R_max = Length / 2 "
+                         "(used ONLY for the slip analysis)")
+    sb.number_input("Friction Coefficient μ TABLE", step=0.01, min_value=0.01, max_value=1.0, key="mu_mesa")
 
 
 def figura_movimiento_mesa(m):
@@ -762,27 +768,27 @@ def figura_movimiento_mesa(m):
 
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True, row_heights=[0.46, 0.54], vertical_spacing=0.08,
-        subplot_titles=("Velocidad angular de la mesa (°/s)",
-                        f"Aceleración sobre la pieza en R_max = {m['r_max']:.0f} mm (G) — zona verde = dentro de μ"),
+        subplot_titles=("Turntable angular velocity (°/s)",
+                        f"Acceleration on the part at R_max = {m['r_max']:.0f} mm (G) — green zone = within μ"),
     )
 
     fig.add_trace(go.Scatter(
-        x=t[idx], y=omega[idx], mode="lines", name="Velocidad angular ω",
+        x=t[idx], y=omega[idx], mode="lines", name="Angular velocity ω",
         line=dict(color=COL_A, width=3),
         customdata=np.column_stack([theta[idx], nombres[idx]]),
         hovertemplate="ω = %{y:.2f} °/s · θ = %{customdata[0]:.2f}° · %{customdata[1]}<extra></extra>",
     ), row=1, col=1)
 
     fig.add_trace(go.Scatter(
-        x=t[idx], y=g_tan[idx], mode="lines", name="Tangencial (rampa)",
+        x=t[idx], y=g_tan[idx], mode="lines", name="Tangential (ramp)",
         line=dict(color=COL_TAN, width=1.5, shape="vh"), hovertemplate="%{y:.3f} G",
     ), row=2, col=1)
     fig.add_trace(go.Scatter(
-        x=t[idx], y=g_cent[idx], mode="lines", name="Centrípeta (ω²·R)",
+        x=t[idx], y=g_cent[idx], mode="lines", name="Centripetal (ω²·R)",
         line=dict(color=COL_CENT, width=1.5), hovertemplate="%{y:.3f} G",
     ), row=2, col=1)
     fig.add_trace(go.Scatter(
-        x=t[idx], y=g_res[idx], mode="lines", name="Resultante",
+        x=t[idx], y=g_res[idx], mode="lines", name="Resultant",
         line=dict(color="#444444", width=2.5), hovertemplate="%{y:.3f} G",
     ), row=2, col=1)
 
@@ -790,14 +796,14 @@ def figura_movimiento_mesa(m):
     g_top = max(float(np.max(g_res)) if len(g_res) else 0.0, mu, 1e-3)
     fig.add_hrect(y0=0, y1=mu, fillcolor=COL_OK, opacity=0.08, line_width=0, layer="below", row=2, col=1)
     fig.add_hline(y=mu, line_width=2, line_dash="dash", line_color=COL_SLIP, row=2, col=1)
-    entrada_leyenda(fig, f"Límite de fricción μ = {mu:.2f}", COL_SLIP, "dash", row=2, col=1)
+    entrada_leyenda(fig, f"Friction limit μ = {mu:.2f}", COL_SLIP, "dash", row=2, col=1)
 
     for fila in (1, 2):
         fig.add_vline(x=m["t_red"], line_width=2, line_dash="dot", line_color=COL_SENSOR_RED, row=fila, col=1)
         fig.add_vline(x=m["t_stop"], line_width=2, line_dash="dash", line_color=COL_SENSOR_STOP, row=fila, col=1)
-    entrada_leyenda(fig, f"Sensor Reducción · {m['t_red']:.2f}s · {m['theta_red']:.2f}°",
+    entrada_leyenda(fig, f"Slowdown Sensor · {m['t_red']:.2f}s · {m['theta_red']:.2f}°",
                     COL_SENSOR_RED, "dot", row=1, col=1)
-    entrada_leyenda(fig, f"Sensor Paro · {m['t_stop']:.2f}s · {m['theta_stop']:.2f}°",
+    entrada_leyenda(fig, f"Stop Sensor · {m['t_stop']:.2f}s · {m['theta_stop']:.2f}°",
                     COL_SENSOR_STOP, "dash", row=1, col=1)
 
     segs = segmentos_fase(t, det["fase"])
@@ -805,7 +811,7 @@ def figura_movimiento_mesa(m):
     t_total = float(t[-1])
     bandas_fase(fig, segs, lambda sg: comps[id(sg)][2], mu, t_total, fila_etiquetas=1)
 
-    # ---- Etiquetas de valor por fase (resultante y sus componentes) ----
+    # ---- Value label per phase (resultant and its components), always above the curves ----
     peor = max(segs, key=lambda sg: comps[id(sg)][2]) if segs else None
     items = []
     for sg in segs:
@@ -813,13 +819,13 @@ def figura_movimiento_mesa(m):
         a, b = sg["i0"], sg["i1"]
         j0 = a + 1 if b > a else b
         tramo = g_res[j0:b + 1]
-        # Flecha al punto de máxima resultante; si la fase es constante, a su centro
+        # Arrow to the point of maximum resultant; if the phase is constant, to its center
         j = (j0 + b) // 2 if np.ptp(tramo) < 1e-4 else j0 + int(np.argmax(tramo))
         items.append({
             "x": float(t[j]), "y": float(g_res[j]), "desliza": res > mu,
             "peor": sg is peor and res > 0,
             "texto": texto_etiqueta(FASE_CORTO[sg["fase"]], f"{res:.3f} G", res > mu,
-                                    f"tan {tan:.3f} · cen {cent:.3f}"),
+                                    f"tan {tan:.3f} · cent {cent:.3f}"),
         })
     fila_etiquetas(fig, items, y_fila=g_top * 1.55, t_total=t_total)
 
@@ -827,7 +833,7 @@ def figura_movimiento_mesa(m):
     fig.update_yaxes(title_text="°/s", range=[-0.04 * w_max, 1.2 * w_max], row=1, col=1)
     fig.update_yaxes(title_text="G", range=[0, g_top * 1.95], tickvals=ticks_bonitos(0, g_top), row=2, col=1)
     fig.update_xaxes(range=[0, t_total])
-    fig.update_xaxes(title_text="Tiempo (s)", row=2, col=1)
+    fig.update_xaxes(title_text="Time (s)", row=2, col=1)
     leyenda_abajo(fig, 800)
     return fig
 
@@ -840,16 +846,16 @@ def tabla_fases_mesa(m):
         a, b = sg["i0"], sg["i1"]
         tan, cent, res = componentes_fase_mesa(m, g_cent, sg)
         filas.append({
-            "Fase": FASE_NOMBRE[sg["fase"]],
-            "Estado PLC": sg["fase"],
-            "Inicio (s)": round(sg["t0"], 3),
-            "Duración (s)": round(sg["t1"] - sg["t0"], 3),
-            "Giro (°)": round(float(m["theta"][b] - m["theta"][a]), 3),
-            "ω inicio → fin (°/s)": f"{m['omega'][a]:.1f} → {m['omega'][b]:.1f}",
-            "G tangencial": round(tan, 3),
-            "G centrípeta máx.": round(cent, 3),
-            "G resultante máx.": round(res, 3),
-            "Estado": "🔴 Supera μ" if res > m["mu"] else "🟢 OK",
+            "Phase": FASE_NOMBRE[sg["fase"]],
+            "PLC state": sg["fase"],
+            "Start (s)": round(sg["t0"], 3),
+            "Duration (s)": round(sg["t1"] - sg["t0"], 3),
+            "Rotation (°)": round(float(m["theta"][b] - m["theta"][a]), 3),
+            "ω start → end (°/s)": f"{m['omega'][a]:.1f} → {m['omega'][b]:.1f}",
+            "Tangential G": round(tan, 3),
+            "Max centripetal G": round(cent, 3),
+            "Max resultant G": round(res, 3),
+            "Status": "🔴 Exceeds μ" if res > m["mu"] else "🟢 OK",
         })
     return filas
 
@@ -857,24 +863,24 @@ def tabla_fases_mesa(m):
 def figura_instantes_mesa(m):
     det = m["det"]
     mu = m["mu"]
-    etiquetas = [k.split(" (")[0].replace(" de ", "<br>") for k in det["resultantes"]]
+    etiquetas = [k.split(" (")[0].replace(" of ", "<br>") for k in det["resultantes"]]
     tan = [c[0] for c in det["componentes"].values()]
     cent = [c[1] for c in det["componentes"].values()]
     res = list(det["resultantes"].values())
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=etiquetas, y=tan, name="Tangencial", marker_color=COL_TAN, opacity=0.55,
+    fig.add_trace(go.Bar(x=etiquetas, y=tan, name="Tangential", marker_color=COL_TAN, opacity=0.55,
                          hovertemplate="%{y:.3f} G"))
-    fig.add_trace(go.Bar(x=etiquetas, y=cent, name="Centrípeta", marker_color=COL_CENT, opacity=0.55,
+    fig.add_trace(go.Bar(x=etiquetas, y=cent, name="Centripetal", marker_color=COL_CENT, opacity=0.55,
                          hovertemplate="%{y:.3f} G"))
-    fig.add_trace(go.Bar(x=etiquetas, y=res, name="Resultante",
+    fig.add_trace(go.Bar(x=etiquetas, y=res, name="Resultant",
                          marker_color=[COL_SLIP if g > mu else COL_OK for g in res],
                          text=[f"{g:.3f} G" for g in res], textposition="outside",
                          hovertemplate="%{y:.3f} G"))
     fig.add_hline(y=mu, line_width=2, line_dash="dash", line_color=COL_SLIP)
-    entrada_leyenda(fig, f"Límite de fricción μ = {mu:.2f}", COL_SLIP, "dash")
+    entrada_leyenda(fig, f"Friction limit μ = {mu:.2f}", COL_SLIP, "dash")
     fig.update_layout(
-        title="Instantes críticos: componentes y resultante vs μ", barmode="group", height=420,
+        title="Critical instants: components and resultant vs μ", barmode="group", height=420,
         yaxis_title="G", yaxis_range=[0, max(max(res), mu) * 1.3],
         legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, font=dict(size=10)),
         margin=dict(b=90, t=70),
@@ -888,13 +894,13 @@ def figura_equivalencia(m, conv_a):
     idx_c = indices_grafica(conv_a["det"]["fase"])
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=m["t"][idx_m], y=v_mesa[idx_m], mode="lines",
-                             name=f"Mesa — velocidad lineal en R_max ({m['r_max']:.0f} mm)",
+                             name=f"Turntable — linear velocity at R_max ({m['r_max']:.0f} mm)",
                              line=dict(color=COL_A, width=3), hovertemplate="%{y:.1f} mm/s"))
     fig.add_trace(go.Scatter(x=conv_a["t"][idx_c], y=conv_a["vel"][idx_c], mode="lines",
-                             name="Conveyor — Perfil A", line=dict(color=COL_NEUTRO, width=2, dash="dash"),
+                             name="Conveyor — Profile A", line=dict(color=COL_NEUTRO, width=2, dash="dash"),
                              hovertemplate="%{y:.1f} mm/s"))
-    fig.update_layout(title="Velocidad lineal (mm/s) vs tiempo — mesa en R_max vs conveyor",
-                      xaxis_title="Tiempo (s)", yaxis_title="mm/s")
+    fig.update_layout(title="Linear velocity (mm/s) vs time — turntable at R_max vs conveyor",
+                      xaxis_title="Time (s)", yaxis_title="mm/s")
     leyenda_abajo(fig, 440, legend_y=-0.22)
     return fig
 
@@ -909,146 +915,146 @@ def pagina_mesa():
     R_sensor = ss.radio_sensor_mesa
     modo_key = modo_conversion_key()
 
-    st.title("🔄 Mesa giratoria")
+    st.title("🔄 Turntable")
     st.caption(
-        f"Pieza centrada en el eje de giro. R_max (deslizamiento) = Longitud/2 = {r_max_mesa:.1f} mm. "
-        f"⚠️ Distinto del Radio Riel Sensores ({R_sensor:.2f} mm), que solo se usa "
-        f"para convertir posiciones de sensores entre grados y mm."
+        f"Part centered on the rotation axis. R_max (slip) = Length/2 = {r_max_mesa:.1f} mm. "
+        f"⚠️ Different from the Sensor Rail Radius ({R_sensor:.2f} mm), which is only used "
+        f"to convert sensor positions between degrees and mm."
     )
 
-    # ---- Alertas de configuración ----
+    # ---- Configuration alerts ----
     if det_m['insufficient_angle']:
         st.warning(
-            f"⚠️ **Configuración inconsistente:** `RAMP_DECEL MESA` necesita "
-            f"**{det_m['angle_needed_decel']:.1f}°** para bajar de SPEED_AUTO_FAST a SPEED_AUTO_SLOW, "
-            f"pero la `Distancia Sensor Reducción MESA` ({ss.sensor_distance_mm_mesa:.1f} mm ≈ "
-            f"{m['sensor_angle']:.1f}°) es insuficiente."
+            f"⚠️ **Inconsistent configuration:** `RAMP_DECEL TABLE` needs "
+            f"**{det_m['angle_needed_decel']:.1f}°** to go from SPEED_AUTO_FAST down to SPEED_AUTO_SLOW, "
+            f"but the `Slowdown Sensor Distance TABLE` ({ss.sensor_distance_mm_mesa:.1f} mm ≈ "
+            f"{m['sensor_angle']:.1f}°) is not enough."
         )
     if det_m['mechanically_capped']:
         st.info(
-            f"ℹ️ `RAMP_STOP MESA` configurado ({ss.ramp_stop_mesa:.1f} °/s²) excede el "
-            f"máximo mecánico alcanzable ({det_m['alpha_mechanical_max']:.1f} °/s², limitado por el piso de "
-            f"{T_MIN_MECANICO_MS:.0f} ms). Se aplicó el límite mecánico: deceleración angular real = "
+            f"ℹ️ Configured `RAMP_STOP TABLE` ({ss.ramp_stop_mesa:.1f} °/s²) exceeds the "
+            f"achievable mechanical maximum ({det_m['alpha_mechanical_max']:.1f} °/s², limited by the "
+            f"{T_MIN_MECANICO_MS:.0f} ms floor). The mechanical limit was applied: actual angular deceleration = "
             f"**{det_m['alpha_stop']:.1f} °/s²** (≈{det_m['ramp_stop_real_ms']:.1f} ms)."
         )
 
-    # ---- Resumen ----
+    # ---- Summary ----
     with st.container(border=True):
-        st.markdown("**Resumen del ciclo**")
+        st.markdown("**Cycle summary**")
         v1, v2, v3, v4, v5 = st.columns(5)
-        v1.metric("Estado (peor caso combinado)", estado_txt(det_m['se_desliza_resultante']),
-                  help="Criterio más completo: tangencial + centrípeta en los instantes críticos.")
-        v2.metric("Aceleración máx. sobre la pieza", f"{det_m['g_res_max']:.3f} G",
-                  help=f"Ocurre en: {det_m['peor_caso_label']}")
-        v3.metric("Factor de seguridad", fmt_fs(det_m['factor_seguridad_resultante']))
-        v4.metric("Tiempo de ciclo", f"{t_m[-1]:.2f} s")
-        v5.metric("Overrun angular", f"{m['ang_overrun']:.3f}°")
+        v1.metric("Status (combined worst case)", estado_txt(det_m['se_desliza_resultante']),
+                  help="Most complete criterion: tangential + centripetal at the critical instants.")
+        v2.metric("Max acceleration on the part", f"{det_m['g_res_max']:.3f} G",
+                  help=f"Occurs at: {det_m['peor_caso_label']}")
+        v3.metric("Safety factor", fmt_fs(det_m['factor_seguridad_resultante']))
+        v4.metric("Cycle time", f"{t_m[-1]:.2f} s")
+        v5.metric("Angular overrun", f"{m['ang_overrun']:.3f}°")
 
     tab_mov, tab_slip, tab_sens, tab_eq, tab_fund = st.tabs([
-        "📈 Movimiento", "⚠️ Deslizamiento", "📍 Sensores y ajuste", "🔁 Equivalencia con conveyor",
-        "📚 Fundamentos",
+        "📈 Motion", "⚠️ Slip", "📍 Sensors & adjustment", "🔁 Conveyor equivalence",
+        "📚 Fundamentals",
     ])
 
     # ------------------------------------------
     with tab_mov:
         st.plotly_chart(figura_movimiento_mesa(m))
         st.caption(
-            "Etiquetas: aceleración resultante máxima de cada fase y sus componentes tangencial (rampa) y "
-            "centrípeta (ω²·R) — verde = dentro de μ, rojo = supera μ, borde grueso = fase más crítica. "
-            "Bandas: fases del PLC. Pasa el cursor sobre la curva de velocidad para ver el ángulo θ en cada instante."
+            "Labels: maximum resultant acceleration of each phase with its tangential (ramp) and "
+            "centripetal (ω²·R) components — green = within μ, red = exceeds μ, thick border = most critical phase. "
+            "Bands: PLC phases. Hover over the velocity curve to see the angle θ at each instant."
         )
 
-        st.subheader("🎯 Posicionamiento y tiempo de ciclo")
+        st.subheader("🎯 Positioning & cycle time")
         mp1, mp2, mp3, mp4, mp5 = st.columns(5)
-        mp1.metric("Overrun Angular", f"{m['ang_overrun']:.3f}°")
+        mp1.metric("Angular Overrun", f"{m['ang_overrun']:.3f}°")
         mp2.metric("Overrun Time", f"{m['overrun_time']*1000:.0f} ms")
-        mp3.metric("Ángulo Final de la Mesa", f"{theta_m[-1]:.3f}°",
-                   help=f"Debe ser el Ángulo Total de Giro ({ss.angle_total_mesa:.1f}°) más el overrun.")
-        mp4.metric("Posición Final Pieza", f"{(theta_m[-1] + det_m['deslizamiento_deg_stop']):.3f}°")
-        mp5.metric("Tiempo Total de Ciclo", f"{t_m[-1]:.2f} s")
+        mp3.metric("Final Table Angle", f"{theta_m[-1]:.3f}°",
+                   help=f"Should be the Total Rotation Angle ({ss.angle_total_mesa:.1f}°) plus the overrun.")
+        mp4.metric("Final Part Position", f"{(theta_m[-1] + det_m['deslizamiento_deg_stop']):.3f}°")
+        mp5.metric("Total Cycle Time", f"{t_m[-1]:.2f} s")
 
-        st.subheader("🧭 Fases del ciclo")
+        st.subheader("🧭 Cycle phases")
         st.dataframe(tabla_fases_mesa(m), hide_index=True)
 
     # ------------------------------------------
     with tab_slip:
         st.plotly_chart(figura_instantes_mesa(m))
 
-        st.subheader("Aceleración resultante en los instantes críticos (tangencial + centrípeta)")
+        st.subheader("Resultant acceleration at the critical instants (tangential + centripetal)")
         st.caption(
-            "En los extremos entre fases, la pieza siente AMBAS componentes simultáneamente. El criterio "
-            "'ESTABLE/DESLIZA' del frenado final (más abajo) usa solo la componente tangencial — este "
-            "análisis muestra el peor caso combinado real."
+            "At the boundaries between phases the part feels BOTH components at the same time. The "
+            "'STABLE/SLIPPING' criterion for the final stop (below) uses only the tangential component — this "
+            "analysis shows the actual combined worst case."
         )
         res_cols = st.columns(4)
         for col, (label, g_val) in zip(res_cols, det_m['resultantes'].items()):
             is_worst = (label == det_m['peor_caso_label'])
             col.metric(label.split(" (")[0], f"{g_val:.3f} G",
-                       delta="⚠️ PEOR CASO" if is_worst else None, delta_color="off", help=label)
+                       delta="⚠️ WORST CASE" if is_worst else None, delta_color="off", help=label)
 
         rc1, rc2 = st.columns(2)
-        rc1.metric("🔺 Peor Caso Combinado (Resultante Máxima)", f"{det_m['g_res_max']:.3f} G",
-                   help=f"Ocurre en: {det_m['peor_caso_label']}")
-        rc2.metric("🛡️ Factor de Seguridad Resultante (μ / g_res_max)", fmt_fs(det_m['factor_seguridad_resultante']))
+        rc1.metric("🔺 Combined Worst Case (Max Resultant)", f"{det_m['g_res_max']:.3f} G",
+                   help=f"Occurs at: {det_m['peor_caso_label']}")
+        rc2.metric("🛡️ Resultant Safety Factor (μ / g_res_max)", fmt_fs(det_m['factor_seguridad_resultante']))
 
         if det_m['se_desliza_resultante'] and not m['desliza']:
             st.warning(
-                f"⚠️ **Diferencia detectada:** el criterio actual (solo tangencial) marca **ESTABLE**, pero el "
-                f"criterio resultante indica que en **{det_m['peor_caso_label']}** la fuerza total "
-                f"({det_m['g_res_max']:.3f} G) **supera** μ ({ss.mu_mesa:.2f} G)."
+                f"⚠️ **Difference detected:** the current criterion (tangential only) says **STABLE**, but the "
+                f"resultant criterion shows that at **{det_m['peor_caso_label']}** the total force "
+                f"({det_m['g_res_max']:.3f} G) **exceeds** μ ({ss.mu_mesa:.2f} G)."
             )
         elif det_m['se_desliza_resultante']:
-            st.error(f"🔴 El criterio resultante confirma deslizamiento — peor caso en **{det_m['peor_caso_label']}**.")
+            st.error(f"🔴 The resultant criterion confirms slip — worst case at **{det_m['peor_caso_label']}**.")
         else:
-            st.success("🟢 Incluso considerando el peor caso combinado, la pieza permanece estable en todo el ciclo.")
+            st.success("🟢 Even considering the combined worst case, the part stays stable throughout the cycle.")
 
         st.divider()
-        st.subheader("Frenado final (componente tangencial)")
+        st.subheader("Final stop (tangential component)")
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Deceleración Tangencial (frenado)", f"{m['g_conv']:.3f} G")
-        m2.metric("Límite de Fricción (μ)", f"{ss.mu_mesa:.2f} G")
-        m3.metric("Estabilidad al Frenar", estado_txt(m['desliza']))
-        m4.metric("Deslizamiento Relativo",
+        m1.metric("Tangential Deceleration (stop)", f"{m['g_conv']:.3f} G")
+        m2.metric("Friction Limit (μ)", f"{ss.mu_mesa:.2f} G")
+        m3.metric("Stability When Stopping", estado_txt(m['desliza']))
+        m4.metric("Relative Slip",
                   f"{det_m['deslizamiento_deg_stop']:.4f}° ({m['d_desliza_mm']:.3f} mm)" if m['desliza'] else "0.0000°")
-        st.metric("🛡️ Factor de Seguridad al Frenar (μ / g_tan)", fmt_fs(det_m['factor_seguridad_stop']))
+        st.metric("🛡️ Safety Factor When Stopping (μ / g_tan)", fmt_fs(det_m['factor_seguridad_stop']))
 
         st.divider()
-        st.subheader("🌀 Riesgo centrípeto en crucero (velocidad constante)")
+        st.subheader("🌀 Centripetal risk while cruising (constant speed)")
         st.caption(
-            "Este riesgo existe SIEMPRE que la mesa gira a velocidad constante, sin necesidad de frenar. "
-            "No tiene equivalente en el conveyor lineal."
+            "This risk exists ANY time the table rotates at constant speed, even without braking. "
+            "It has no equivalent on the linear conveyor."
         )
         mc1, mc2, mc3, mc4 = st.columns(4)
-        mc1.metric("G Centrípeta @ Velocidad Rápida", f"{det_m['g_cent_fast']:.3f} G")
-        mc2.metric("Estabilidad @ Rápida", "🔴 RIESGO" if det_m['se_desliza_cruise_fast'] else "🟢 OK")
-        mc3.metric("G Centrípeta @ Velocidad Lenta", f"{det_m['g_cent_slow']:.3f} G")
-        mc4.metric("Estabilidad @ Lenta", "🔴 RIESGO" if det_m['se_desliza_cruise_slow'] else "🟢 OK")
+        mc1.metric("Centripetal G @ Fast Speed", f"{det_m['g_cent_fast']:.3f} G")
+        mc2.metric("Stability @ Fast", "🔴 RISK" if det_m['se_desliza_cruise_fast'] else "🟢 OK")
+        mc3.metric("Centripetal G @ Slow Speed", f"{det_m['g_cent_slow']:.3f} G")
+        mc4.metric("Stability @ Slow", "🔴 RISK" if det_m['se_desliza_cruise_slow'] else "🟢 OK")
 
         if det_m['se_desliza_cruise_fast'] or det_m['se_desliza_cruise_slow']:
             st.error(
-                "🔴 **Riesgo de deslizamiento en crucero detectado.** La fuerza centrípeta a esta velocidad angular "
-                "y radio supera la fricción disponible."
+                "🔴 **Slip risk while cruising detected.** The centripetal force at this angular speed "
+                "and radius exceeds the available friction."
             )
         else:
-            st.success("🟢 La fuerza centrípeta en ambas velocidades de crucero está dentro del límite de fricción.")
+            st.success("🟢 The centripetal force at both cruise speeds is within the friction limit.")
 
-        with st.expander("🔍 Ver desglose de cálculo — Mesa giratoria"):
-            st.markdown("### 🧮 Memoria de Cálculo (Valores Simulados)")
+        with st.expander("🔍 View calculation breakdown — Turntable"):
+            st.markdown("### 🧮 Calculation Report (Simulated Values)")
 
-            st.markdown("**Paso 0: Distancia Sensor → Ángulo**")
+            st.markdown("**Step 0: Sensor Distance → Angle**")
             st.latex(L(
-                f"~theta_{{~text{{sensor}}}} = {m['sensor_angle']:.3f}° ~quad ~text{{(desde "
-                f"{ss.sensor_distance_mm_mesa:.1f}~,~text{{mm}} sobre riel R={R_sensor:.2f}~,~text{{mm}})}}"
+                f"~theta_{{~text{{sensor}}}} = {m['sensor_angle']:.3f}° ~quad ~text{{(from "
+                f"{ss.sensor_distance_mm_mesa:.1f}~,~text{{mm}} on rail R={R_sensor:.2f}~,~text{{mm}})}}"
             ))
 
-            st.markdown("**Paso 1: Deceleración Angular Mecánica Máxima (Piso)**")
+            st.markdown("**Step 1: Maximum Mechanical Angular Deceleration (Floor)**")
             st.latex(L(
                 f"~alpha_{{~text{{mech,max}}}} = ~frac{{~omega_{{~text{{slow}}}}}}{{20~,~text{{ms}}}} = "
                 f"~frac{{{ss.speed_slow_mesa:.1f}~,°/s}}{{0.020~,~text{{s}}}} = "
                 f"~mathbf{{{det_m['alpha_mechanical_max']:.1f}~,°/s^2}}"
             ))
 
-            st.markdown("**Paso 2: Deceleración Angular Efectiva (RAMP_STOP MESA limitado por el piso mecánico)**")
+            st.markdown("**Step 2: Effective Angular Deceleration (RAMP_STOP TABLE capped by the mechanical floor)**")
             st.latex(L(
                 f"~alpha_{{~text{{stop}}}} = ~min({ss.ramp_stop_mesa:.1f}~,°/s^2, "
                 f"{det_m['alpha_mechanical_max']:.1f}~,°/s^2) = ~mathbf{{{det_m['alpha_stop']:.1f}~,°/s^2}} "
@@ -1060,90 +1066,90 @@ def pagina_mesa():
             ))
             st.latex(L(f"g_{{~text{{conv}}}} = ~frac{{{det_m['a_tan_stop']:.2f}}}{{9810}} = ~mathbf{{{m['g_conv']:.3f}~,G}}"))
 
-            st.markdown("**Paso 3: Componente Centrípeta en Crucero**")
-            st.latex(L(r"a_{~text{cent}} = ~omega^2 ~cdot R_{~text{max}} ~quad ~text{(en radianes)}"))
+            st.markdown("**Step 3: Centripetal Component While Cruising**")
+            st.latex(L(r"a_{~text{cent}} = ~omega^2 ~cdot R_{~text{max}} ~quad ~text{(in radians)}"))
             st.latex(L(
                 f"g_{{~text{{cent,fast}}}} = ~mathbf{{{det_m['g_cent_fast']:.3f}~,G}} ~quad "
                 f"g_{{~text{{cent,slow}}}} = ~mathbf{{{det_m['g_cent_slow']:.3f}~,G}}"
             ))
 
-            st.markdown("**Paso 4: Criterio de Deslizamiento al Frenar (tangencial simple)**")
+            st.markdown("**Step 4: Slip Criterion When Stopping (tangential only)**")
             if m['desliza']:
-                st.error(f"🔴 **DESLIZA AL FRENAR:** g_conv ({m['g_conv']:.3f} G) > μ ({ss.mu_mesa:.2f} G)")
+                st.error(f"🔴 **SLIPS WHEN STOPPING:** g_conv ({m['g_conv']:.3f} G) > μ ({ss.mu_mesa:.2f} G)")
             else:
-                st.success(f"🟢 **ESTABLE AL FRENAR:** g_conv ({m['g_conv']:.3f} G) ≤ μ ({ss.mu_mesa:.2f} G)")
+                st.success(f"🟢 **STABLE WHEN STOPPING:** g_conv ({m['g_conv']:.3f} G) ≤ μ ({ss.mu_mesa:.2f} G)")
 
     # ------------------------------------------
     with tab_sens:
-        st.subheader("📍 Distancia entre sensores (mm) — configuración de campo")
+        st.subheader("📍 Distance between sensors (mm) — field setup")
         st.caption(
-            "Ambos sensores (Reducción y Paro) están ubicados cerca del final del recorrido angular total, "
-            "montados sobre un riel fijo. Ingresa su separación física tal como se mide con cinta métrica "
-            "(barra lateral, junto con la fórmula de conversión) — la app la convierte al ángulo equivalente."
+            "Both sensors (Slowdown and Stop) are located near the end of the total angular travel, "
+            "mounted on a fixed rail. Enter their physical separation as measured with a tape measure "
+            "(sidebar, together with the conversion formula) — the app converts it to the equivalent angle."
         )
         sd1, sd2, sd3 = st.columns(3)
-        sd1.metric("Distancia Sensor Reducción MESA (entrada)", f"{ss.sensor_distance_mm_mesa:.1f} mm")
-        sd2.metric("→ Ángulo Equivalente Usado por el Motor", f"{m['sensor_angle']:.3f}°")
-        sd3.metric("Radio Riel Sensores MESA", f"{R_sensor:.2f} mm")
+        sd1.metric("Slowdown Sensor Distance TABLE (input)", f"{ss.sensor_distance_mm_mesa:.1f} mm")
+        sd2.metric("→ Equivalent Angle Used by the Engine", f"{m['sensor_angle']:.3f}°")
+        sd3.metric("Sensor Rail Radius TABLE", f"{R_sensor:.2f} mm")
         st.latex(L(
             f"~theta_{{~text{{sensor}}}} = ~text{{mm~_to~_angle}}({ss.sensor_distance_mm_mesa:.1f}~,~text{{mm}}, "
             f"R={R_sensor:.2f}~,~text{{mm}}) = ~mathbf{{{m['sensor_angle']:.3f}°}}"
         ))
         st.caption(
-            f"Con esta distancia, el sensor de reducción se activa en θ = {det_m['angle_sensor_red']:.2f}° "
-            f"(t = {m['t_red']:.2f} s) y el de paro en θ = {det_m['angle_stop']:.2f}° (t = {m['t_stop']:.2f} s). "
-            f"La rampa de DECEL necesita {det_m['angle_needed_decel']:.2f}° para llegar a SPEED_AUTO_SLOW."
+            f"With this distance, the slowdown sensor triggers at θ = {det_m['angle_sensor_red']:.2f}° "
+            f"(t = {m['t_red']:.2f} s) and the stop sensor at θ = {det_m['angle_stop']:.2f}° (t = {m['t_stop']:.2f} s). "
+            f"The DECEL ramp needs {det_m['angle_needed_decel']:.2f}° to reach SPEED_AUTO_SLOW."
         )
 
         st.divider()
-        st.subheader("📏 Overrun angular y su conversión al riel de sensores (mm)")
+        st.subheader("📏 Angular overrun and its conversion to the sensor rail (mm)")
         st.caption(
-            "Convierte el overrun angular (causado por RAMP_STOP) a la distancia lineal equivalente sobre el "
-            "riel de sensores, para que mantenimiento pueda reposicionar el sensor de paro usando cinta métrica."
+            "Converts the angular overrun (caused by RAMP_STOP) into the equivalent linear distance on the "
+            "sensor rail, so maintenance can reposition the stop sensor with a tape measure."
         )
         overrun_mm_riel = angle_to_mm(m['ang_overrun'], R_sensor, modo_key)
         ov1, ov2, ov3 = st.columns(3)
-        ov1.metric("Overrun Angular", f"{m['ang_overrun']:.4f}°")
-        ov2.metric(f"Overrun en el Riel (R={R_sensor:.2f}mm)", f"{overrun_mm_riel:.3f} mm")
+        ov1.metric("Angular Overrun", f"{m['ang_overrun']:.4f}°")
+        ov2.metric(f"Overrun on the Rail (R={R_sensor:.2f}mm)", f"{overrun_mm_riel:.3f} mm")
         ov3.metric("Overrun Time", f"{m['overrun_time']*1000:.0f} ms")
 
-        st.markdown("**🔧 Recomendación de compensación (para preservar la posición de paro original):**")
+        st.markdown("**🔧 Compensation recommendation (to keep the original stop position):**")
         trigger_angle_original = ss.angle_total_mesa
         trigger_angle_compensado = trigger_angle_original - m['ang_overrun']
         trigger_mm_original = angle_to_mm(trigger_angle_original, R_sensor, modo_key)
         trigger_mm_compensado = angle_to_mm(trigger_angle_compensado, R_sensor, modo_key)
 
         comp1, comp2 = st.columns(2)
-        comp1.metric("Posición Actual del Sensor de Paro", f"{trigger_mm_original:.2f} mm")
-        comp2.metric("Posición Compensada Recomendada", f"{trigger_mm_compensado:.2f} mm",
-                     delta=f"{(trigger_mm_compensado - trigger_mm_original):.3f} mm (mover hacia atrás)",
+        comp1.metric("Current Stop Sensor Position", f"{trigger_mm_original:.2f} mm")
+        comp2.metric("Recommended Compensated Position", f"{trigger_mm_compensado:.2f} mm",
+                     delta=f"{(trigger_mm_compensado - trigger_mm_original):.3f} mm (move back)",
                      delta_color="inverse")
         st.info(
-            f"💡 Para que la mesa termine deteniéndose exactamente en el mismo punto que tendría con "
-            f"`RAMP_STOP MESA = 0`, mueve el **sensor de paro** físicamente "
-            f"**{abs(trigger_mm_compensado - trigger_mm_original):.3f} mm hacia atrás** sobre el riel."
+            f"💡 For the table to stop at exactly the same point it would reach with "
+            f"`RAMP_STOP TABLE = 0`, physically move the **stop sensor** "
+            f"**{abs(trigger_mm_compensado - trigger_mm_original):.3f} mm back** along the rail."
         )
 
     # ------------------------------------------
     with tab_eq:
-        st.subheader("📐 Equivalencia lineal en el punto crítico (R_max)")
+        st.subheader("📐 Linear equivalence at the critical point (R_max)")
         st.caption(
-            f"Convierte cada parámetro angular de la mesa a su equivalente lineal (mm/s, mm/s²) en el punto más "
-            f"lejano de la pieza (R_max = {r_max_mesa:.1f} mm), para comparar directamente contra las mismas "
-            f"unidades del conveyor lineal (Perfil A, configurado en la sección Conveyor)."
+            f"Converts each angular table parameter into its linear equivalent (mm/s, mm/s²) at the farthest "
+            f"point of the part (R_max = {r_max_mesa:.1f} mm), to compare directly against the same "
+            f"units on the linear conveyor (Profile A, set up in the Conveyor section)."
         )
         conv_a = simular_conveyor("a")
         st.plotly_chart(figura_equivalencia(m, conv_a))
 
         eqL1, eqL2 = st.columns(2)
         with eqL1:
-            st.markdown("**🔄 Mesa Giratoria (convertido a R_max)**")
-            st.metric("SPEED_AUTO_FAST MESA → mm/s", f"{det_m['v_fast_lineal']:.1f} mm/s")
-            st.metric("SPEED_AUTO_SLOW MESA → mm/s", f"{det_m['v_slow_lineal']:.1f} mm/s")
-            st.metric("RAMP_ACCEL MESA → mm/s²", f"{det_m['a_accel_lineal']:.1f} mm/s²")
-            st.metric("RAMP_DECEL MESA → mm/s²", f"{det_m['a_decel_lineal']:.1f} mm/s²")
+            st.markdown("**🔄 Turntable (converted to R_max)**")
+            st.metric("SPEED_AUTO_FAST TABLE → mm/s", f"{det_m['v_fast_lineal']:.1f} mm/s")
+            st.metric("SPEED_AUTO_SLOW TABLE → mm/s", f"{det_m['v_slow_lineal']:.1f} mm/s")
+            st.metric("RAMP_ACCEL TABLE → mm/s²", f"{det_m['a_accel_lineal']:.1f} mm/s²")
+            st.metric("RAMP_DECEL TABLE → mm/s²", f"{det_m['a_decel_lineal']:.1f} mm/s²")
         with eqL2:
-            st.markdown("**➡️ Conveyor Lineal (Perfil A, referencia directa)**")
+            st.markdown("**➡️ Linear Conveyor (Profile A, direct reference)**")
             st.metric("SPEED_AUTO_FAST A", f"{ss.speed_fast_a:.1f} mm/s",
                       delta=f"{det_m['v_fast_lineal'] - ss.speed_fast_a:+.1f} mm/s", delta_color="off")
             st.metric("SPEED_AUTO_SLOW A", f"{ss.speed_slow_a:.1f} mm/s",
@@ -1159,32 +1165,32 @@ def pagina_mesa():
 
 
 # ==========================================
-# PÁGINA: CONVEYOR
+# PAGE: CONVEYOR
 # ==========================================
 def sidebar_conveyor():
     sb = st.sidebar
-    sb.header("➡️ Parámetros — Conveyor")
+    sb.header("➡️ Parameters — Conveyor")
 
-    sb.subheader("Geometría")
-    sb.number_input("Largo Total Conveyor (mm)", step=100.0, key="conveyor_length")
+    sb.subheader("Geometry")
+    sb.number_input("Total Conveyor Length (mm)", step=100.0, key="conveyor_length")
 
-    sb.subheader("🔵 Perfil A (principal)")
+    sb.subheader("🔵 Profile A (main)")
     sb.number_input("SPEED_AUTO_FAST A (mm/s)", step=10.0, key="speed_fast_a")
     sb.number_input("SPEED_AUTO_SLOW A (mm/s)", step=10.0, key="speed_slow_a")
     sb.number_input("RAMP_ACCEL A (mm/s²)", step=50.0, key="accel_a")
     sb.number_input("RAMP_DECEL A (mm/s²)", step=50.0, key="decel_a")
-    sb.number_input("Distancia Sensor Reducción A (mm)", step=25.0, key="sensor_distance_a")
+    sb.number_input("Slowdown Sensor Distance A (mm)", step=25.0, key="sensor_distance_a")
     sb.number_input(
         "RAMP_STOP A (mm/s²)", step=100.0, min_value=0.0, key="ramp_stop_a",
-        help="Deceleración directamente comandada por el PLC para el frenado final — mismo tipo de parámetro que "
-             "RAMP_ACCEL / RAMP_DECEL (NO es un tiempo). Un piso mecánico (backlash de cadena, flexión de chasis) "
-             "limita la deceleración máxima físicamente alcanzable a v_slow / 20ms. Si se deja en 0, se asume que "
-             "el PLC no limita el frenado y el sistema se detiene tan rápido como mecánicamente es posible."
+        help="Deceleration commanded directly by the PLC for the final stop — same kind of parameter as "
+             "RAMP_ACCEL / RAMP_DECEL (NOT a time). A mechanical floor (chain backlash, frame flex) "
+             "limits the maximum physically achievable deceleration to v_slow / 20 ms. If left at 0, the PLC "
+             "is assumed not to limit braking and the system stops as fast as is mechanically possible."
     )
-    sb.number_input("Coeficiente Fricción μ A", step=0.01, min_value=0.01, max_value=1.0, key="mu_a")
+    sb.number_input("Friction Coefficient μ A", step=0.01, min_value=0.01, max_value=1.0, key="mu_a")
 
     sb.divider()
-    sb.checkbox("Comparar con Perfil B", key="comparar")
+    sb.checkbox("Compare with Profile B", key="comparar")
 
     ss = st.session_state
     if ss.comparar and not ss._comparar_prev:
@@ -1198,24 +1204,24 @@ def sidebar_conveyor():
     ss._comparar_prev = ss.comparar
 
     if ss.comparar:
-        sb.subheader("🟣 Perfil B (comparativa)")
+        sb.subheader("🟣 Profile B (comparison)")
         sb.number_input("SPEED_AUTO_FAST B (mm/s)", step=10.0, key="speed_fast_b")
         sb.number_input("SPEED_AUTO_SLOW B (mm/s)", step=10.0, key="speed_slow_b")
         sb.number_input("RAMP_ACCEL B (mm/s²)", step=50.0, key="accel_b")
         sb.number_input("RAMP_DECEL B (mm/s²)", step=50.0, key="decel_b")
-        sb.number_input("Distancia Sensor Reducción B (mm)", step=25.0, key="sensor_distance_b")
+        sb.number_input("Slowdown Sensor Distance B (mm)", step=25.0, key="sensor_distance_b")
         sb.number_input(
             "RAMP_STOP B (mm/s²)", step=100.0, min_value=0.0, key="ramp_stop_b",
-            help="Igual que RAMP_STOP A — deceleración directa (mm/s²), no un tiempo. 0 = usar el máximo mecánico."
+            help="Same as RAMP_STOP A — direct deceleration (mm/s²), not a time. 0 = use the mechanical maximum."
         )
-        sb.number_input("Coeficiente Fricción μ B", step=0.01, min_value=0.01, max_value=1.0, key="mu_b")
+        sb.number_input("Friction Coefficient μ B", step=0.01, min_value=0.01, max_value=1.0, key="mu_b")
 
 
 def figura_movimiento_conveyor(a, b=None):
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True, row_heights=[0.46, 0.54], vertical_spacing=0.08,
-        subplot_titles=("Velocidad del conveyor (mm/s)",
-                        "Aceleración sobre la pieza (G) — zona verde = dentro de μ"),
+        subplot_titles=("Conveyor velocity (mm/s)",
+                        "Acceleration on the part (G) — green zone = within μ"),
     )
     perfiles = [("A", a, COL_A, "solid")] + ([("B", b, COL_B, "dashdot")] if b is not None else [])
 
@@ -1227,52 +1233,52 @@ def figura_movimiento_conveyor(a, b=None):
         g = det["a_cmd"] / 9810.0
         g_abs_max = max(g_abs_max, float(np.max(np.abs(g))) if len(g) else 0.0)
         fig.add_trace(go.Scatter(
-            x=s["t"][idx], y=s["vel"][idx], mode="lines", name=f"Velocidad {nombre}",
+            x=s["t"][idx], y=s["vel"][idx], mode="lines", name=f"Velocity {nombre}",
             line=dict(color=color, width=3, dash=dash),
             customdata=np.column_stack([s["pos"][idx], nombres[idx]]),
             hovertemplate=f"{nombre}: " + "%{y:.1f} mm/s · x = %{customdata[0]:.1f} mm · %{customdata[1]}<extra></extra>",
         ), row=1, col=1)
         fig.add_trace(go.Scatter(
-            x=s["t"][idx], y=g[idx], mode="lines", name=f"Aceleración {nombre}",
+            x=s["t"][idx], y=g[idx], mode="lines", name=f"Acceleration {nombre}",
             line=dict(color=color, width=2, dash=dash, shape="vh"),
             hovertemplate=f"{nombre}: " + "%{y:.3f} G<extra></extra>",
         ), row=2, col=1)
 
-    # Sensores
+    # Sensors
     for nombre, s, color, _ in perfiles:
         c_red = COL_SENSOR_RED if nombre == "A" else COL_B
         c_stop = COL_SENSOR_STOP if nombre == "A" else "#6f4a94"
         for fila in (1, 2):
             fig.add_vline(x=s["t_red"], line_width=2, line_dash="dot", line_color=c_red, row=fila, col=1)
             fig.add_vline(x=s["t_stop"], line_width=2, line_dash="dash", line_color=c_stop, row=fila, col=1)
-        entrada_leyenda(fig, f"Sensor Reducción {nombre} · {s['t_red']:.2f}s · {s['det']['pos_sensor_red']:.0f} mm",
+        entrada_leyenda(fig, f"Slowdown Sensor {nombre} · {s['t_red']:.2f}s · {s['det']['pos_sensor_red']:.0f} mm",
                         c_red, "dot", row=1, col=1)
-        entrada_leyenda(fig, f"Sensor Paro {nombre} · {s['t_stop']:.2f}s · {s['det']['pos_stop']:.0f} mm",
+        entrada_leyenda(fig, f"Stop Sensor {nombre} · {s['t_stop']:.2f}s · {s['det']['pos_stop']:.0f} mm",
                         c_stop, "dash", row=1, col=1)
 
-    # Límite de fricción
+    # Friction limit
     mu_a = a["mu"]
     fig.add_hrect(y0=-mu_a, y1=mu_a, fillcolor=COL_OK, opacity=0.08, line_width=0, layer="below", row=2, col=1)
     for signo in (1, -1):
         fig.add_hline(y=signo * mu_a, line_width=2, line_dash="dash", line_color=COL_SLIP, row=2, col=1)
-    entrada_leyenda(fig, f"Límite de fricción ±μ{' A' if b is not None else ''} = {mu_a:.2f}",
+    entrada_leyenda(fig, f"Friction limit ±μ{' A' if b is not None else ''} = {mu_a:.2f}",
                     COL_SLIP, "dash", row=2, col=1)
     mu_max = mu_a
     if b is not None and abs(b["mu"] - mu_a) > 1e-9:
         mu_max = max(mu_max, b["mu"])
         for signo in (1, -1):
             fig.add_hline(y=signo * b["mu"], line_width=2, line_dash="dot", line_color=COL_B, row=2, col=1)
-        entrada_leyenda(fig, f"Límite de fricción ±μ B = {b['mu']:.2f}", COL_B, "dot", row=2, col=1)
+        entrada_leyenda(fig, f"Friction limit ±μ B = {b['mu']:.2f}", COL_B, "dot", row=2, col=1)
 
-    # Fases del perfil A
+    # Profile A phases
     det_a = a["det"]
     segs = segmentos_fase(a["t"], det_a["fase"])
     t_total = max(float(s["t"][-1]) for _, s, _, _ in perfiles)
     bandas_fase(fig, segs, lambda sg: abs(det_a["a_cmd"][sg["i1"]]) / 9810.0, mu_a, t_total, fila_etiquetas=1)
 
-    # ---- Etiquetas de valor por rampa: aceleraciones arriba, deceleraciones abajo ----
+    # ---- Value label per ramp, all in one row above the curves ----
     g_top = max(g_abs_max, mu_max, 1e-3)
-    arriba, abajo = [], []
+    items = []
     for nombre, s, color, _ in perfiles:
         det = s["det"]
         rampas = [sg for sg in segmentos_fase(s["t"], det["fase"]) if abs(det["a_cmd"][sg["i1"]]) > 0]
@@ -1284,22 +1290,20 @@ def figura_movimiento_conveyor(a, b=None):
             dur = sg["t1"] - sg["t0"]
             dur_txt = f"{dur * 1000:.0f} ms" if dur < 0.1 else f"{dur:.2f} s"
             titulo = f"{nombre} · {FASE_CORTO[sg['fase']]}" if b is not None else FASE_CORTO[sg["fase"]]
-            item = {
+            items.append({
                 "x": (sg["t0"] + sg["t1"]) / 2, "y": g, "desliza": desliza, "peor": sg is peor,
                 "texto": texto_etiqueta(titulo, f"{g:+.3f} G".replace("-", "−"), desliza,
                                         f"{abs(a_val):.0f} mm/s² · {dur_txt}",
                                         color_titulo=color if b is not None else "#374151"),
-            }
-            (arriba if g > 0 else abajo).append(item)
-    fila_etiquetas(fig, arriba, y_fila=g_top * 1.7, t_total=t_total)
-    fila_etiquetas(fig, abajo, y_fila=-g_top * 1.7, t_total=t_total)
+            })
+    fila_etiquetas(fig, items, y_fila=g_top * 1.6, t_total=t_total)
 
     v_max = max(max(float(np.max(s["vel"])) for _, s, _, _ in perfiles), 1e-3)
     fig.update_yaxes(title_text="mm/s", range=[-0.04 * v_max, 1.2 * v_max], row=1, col=1)
-    fig.update_yaxes(title_text="G", range=[-g_top * 2.3, g_top * 2.3],
+    fig.update_yaxes(title_text="G", range=[-g_top * 1.15, g_top * 2.1],
                      tickvals=ticks_bonitos(-g_top, g_top, max_ticks=6), row=2, col=1)
     fig.update_xaxes(range=[0, t_total])
-    fig.update_xaxes(title_text="Tiempo (s)", row=2, col=1)
+    fig.update_xaxes(title_text="Time (s)", row=2, col=1)
     leyenda_abajo(fig, 800)
     return fig
 
@@ -1310,23 +1314,23 @@ def tabla_fases_conveyor(s, perfil=None):
     for sg in segmentos_fase(s["t"], det["fase"]):
         a, b = sg["i0"], sg["i1"]
         g = abs(det["a_cmd"][b]) / 9810.0
-        fila = {"Perfil": perfil} if perfil else {}
+        fila = {"Profile": perfil} if perfil else {}
         fila.update({
-            "Fase": FASE_NOMBRE[sg["fase"]],
-            "Estado PLC": sg["fase"],
-            "Inicio (s)": round(sg["t0"], 3),
-            "Duración (s)": round(sg["t1"] - sg["t0"], 3),
-            "Recorrido (mm)": round(float(s["pos"][b] - s["pos"][a]), 2),
-            "v inicio → fin (mm/s)": f"{s['vel'][a]:.0f} → {s['vel'][b]:.0f}",
-            "Aceleración (G)": round(g, 3),
-            "Estado": "🔴 Supera μ" if g > s["mu"] else "🟢 OK",
+            "Phase": FASE_NOMBRE[sg["fase"]],
+            "PLC state": sg["fase"],
+            "Start (s)": round(sg["t0"], 3),
+            "Duration (s)": round(sg["t1"] - sg["t0"], 3),
+            "Travel (mm)": round(float(s["pos"][b] - s["pos"][a]), 2),
+            "v start → end (mm/s)": f"{s['vel'][a]:.0f} → {s['vel'][b]:.0f}",
+            "Acceleration (G)": round(g, 3),
+            "Status": "🔴 Exceeds μ" if g > s["mu"] else "🟢 OK",
         })
         filas.append(fila)
     return filas
 
 
 def figura_fases_conveyor(a, b=None):
-    etiquetas = ["Arranque<br>ACCEL_FAST", "Frenado a creep<br>DECEL_TO_SLOW", "Frenado final<br>DECEL_TO_STOP"]
+    etiquetas = ["Start-up<br>ACCEL_FAST", "Braking to creep<br>DECEL_TO_SLOW", "Final stop<br>DECEL_TO_STOP"]
 
     def valores(s):
         return [s["det"]["g_accel"], s["det"]["g_decel"], s["g_conv"]]
@@ -1337,24 +1341,24 @@ def figura_fases_conveyor(a, b=None):
         colores = [COL_SLIP if g > a["mu"] else COL_OK for g in ga]
     else:
         colores = COL_A
-    fig.add_trace(go.Bar(x=etiquetas, y=ga, name="Perfil A" if b is not None else "Aceleración de la fase",
+    fig.add_trace(go.Bar(x=etiquetas, y=ga, name="Profile A" if b is not None else "Phase acceleration",
                          marker_color=colores,
                          text=[f"{g:.3f} G" for g in ga], textposition="outside", hovertemplate="%{y:.3f} G"))
     g_all = list(ga)
     if b is not None:
         gb = valores(b)
         g_all += gb
-        fig.add_trace(go.Bar(x=etiquetas, y=gb, name="Perfil B", marker_color=COL_B,
+        fig.add_trace(go.Bar(x=etiquetas, y=gb, name="Profile B", marker_color=COL_B,
                              text=[f"{g:.3f} G" for g in gb], textposition="outside", hovertemplate="%{y:.3f} G"))
     fig.add_hline(y=a["mu"], line_width=2, line_dash="dash", line_color=COL_SLIP)
-    entrada_leyenda(fig, f"Límite de fricción μ{' A' if b is not None else ''} = {a['mu']:.2f}", COL_SLIP, "dash")
+    entrada_leyenda(fig, f"Friction limit μ{' A' if b is not None else ''} = {a['mu']:.2f}", COL_SLIP, "dash")
     mu_max = a["mu"]
     if b is not None and abs(b["mu"] - a["mu"]) > 1e-9:
         mu_max = max(mu_max, b["mu"])
         fig.add_hline(y=b["mu"], line_width=2, line_dash="dot", line_color=COL_B)
-        entrada_leyenda(fig, f"Límite de fricción μ B = {b['mu']:.2f}", COL_B, "dot")
+        entrada_leyenda(fig, f"Friction limit μ B = {b['mu']:.2f}", COL_B, "dot")
     fig.update_layout(
-        title="Aceleración por transición de estados vs μ", barmode="group", height=400,
+        title="Acceleration per state transition vs μ", barmode="group", height=400,
         yaxis_title="G", yaxis_range=[0, max(max(g_all), mu_max) * 1.3],
         legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, font=dict(size=10)),
         margin=dict(b=90, t=70),
@@ -1371,82 +1375,82 @@ def pagina_conveyor():
     det_a = A["det"]
     det_b = B["det"] if comparar else None
 
-    st.title("➡️ Conveyor lineal")
-    st.caption("Análisis en tiempo real del perfil de velocidad, posicionamiento y deslizamiento inercial de la pieza.")
+    st.title("➡️ Linear conveyor")
+    st.caption("Real-time analysis of the velocity profile, positioning and inertial slip of the part.")
 
-    # ---- Alertas de configuración ----
+    # ---- Configuration alerts ----
     if det_a['insufficient_distance']:
         st.warning(
-            f"⚠️ **Perfil A — Configuración inconsistente:** la rampa `RAMP_DECEL A` necesita "
-            f"**{det_a['dist_needed_decel']:.1f} mm** para bajar de SPEED_AUTO_FAST a SPEED_AUTO_SLOW, "
-            f"pero la `Distancia Sensor Reducción A` solo tiene **{ss.sensor_distance_a:.1f} mm**."
+            f"⚠️ **Profile A — Inconsistent configuration:** the `RAMP_DECEL A` ramp needs "
+            f"**{det_a['dist_needed_decel']:.1f} mm** to go from SPEED_AUTO_FAST down to SPEED_AUTO_SLOW, "
+            f"but the `Slowdown Sensor Distance A` is only **{ss.sensor_distance_a:.1f} mm**."
         )
     if comparar and det_b['insufficient_distance']:
         st.warning(
-            f"⚠️ **Perfil B — Configuración inconsistente:** la rampa `RAMP_DECEL B` necesita "
-            f"**{det_b['dist_needed_decel']:.1f} mm** para bajar de SPEED_AUTO_FAST a SPEED_AUTO_SLOW, "
-            f"pero la `Distancia Sensor Reducción B` solo tiene **{ss.sensor_distance_b:.1f} mm**."
+            f"⚠️ **Profile B — Inconsistent configuration:** the `RAMP_DECEL B` ramp needs "
+            f"**{det_b['dist_needed_decel']:.1f} mm** to go from SPEED_AUTO_FAST down to SPEED_AUTO_SLOW, "
+            f"but the `Slowdown Sensor Distance B` is only **{ss.sensor_distance_b:.1f} mm**."
         )
     if det_a['mechanically_capped']:
         st.info(
-            f"ℹ️ **Perfil A:** `RAMP_STOP A` configurado ({ss.ramp_stop_a:.1f} mm/s²) excede el "
-            f"máximo mecánico alcanzable ({det_a['a_mechanical_max']:.1f} mm/s², limitado por el piso de "
-            f"{T_MIN_MECANICO_MS:.0f} ms). Se aplicó el límite mecánico: deceleración real = "
+            f"ℹ️ **Profile A:** configured `RAMP_STOP A` ({ss.ramp_stop_a:.1f} mm/s²) exceeds the "
+            f"achievable mechanical maximum ({det_a['a_mechanical_max']:.1f} mm/s², limited by the "
+            f"{T_MIN_MECANICO_MS:.0f} ms floor). The mechanical limit was applied: actual deceleration = "
             f"**{det_a['a_stop_conveyor']:.1f} mm/s²** (≈{det_a['ramp_stop_real_ms']:.1f} ms)."
         )
     if comparar and det_b['mechanically_capped']:
         st.info(
-            f"ℹ️ **Perfil B:** `RAMP_STOP B` configurado ({ss.ramp_stop_b:.1f} mm/s²) excede el "
-            f"máximo mecánico alcanzable ({det_b['a_mechanical_max']:.1f} mm/s²). Se aplicó el límite mecánico: "
-            f"deceleración real = **{det_b['a_stop_conveyor']:.1f} mm/s²** (≈{det_b['ramp_stop_real_ms']:.1f} ms)."
+            f"ℹ️ **Profile B:** configured `RAMP_STOP B` ({ss.ramp_stop_b:.1f} mm/s²) exceeds the "
+            f"achievable mechanical maximum ({det_b['a_mechanical_max']:.1f} mm/s²). The mechanical limit was applied: "
+            f"actual deceleration = **{det_b['a_stop_conveyor']:.1f} mm/s²** (≈{det_b['ramp_stop_real_ms']:.1f} ms)."
         )
 
-    # ---- Resumen ----
+    # ---- Summary ----
     def fila_resumen(s, etiqueta, ref=None):
         d = s["det"]
         pos_final = s["pos"][-1] + s["d_desliza"]
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric(f"Estado {etiqueta} (fase más crítica)", estado_txt(d['se_desliza_alguna_fase']))
-        c2.metric(f"Fase más crítica {etiqueta}", f"{d['g_max_fase']:.3f} G", help=d['peor_fase_label'],
+        c1.metric(f"Status {etiqueta} (most critical phase)", estado_txt(d['se_desliza_alguna_fase']))
+        c2.metric(f"Most critical phase {etiqueta}", f"{d['g_max_fase']:.3f} G", help=d['peor_fase_label'],
                   delta=d['peor_fase_label'].split(" (")[0], delta_color="off")
-        c3.metric(f"Factor de seguridad {etiqueta}", fmt_fs(d['factor_seguridad_fase']))
+        c3.metric(f"Safety factor {etiqueta}", fmt_fs(d['factor_seguridad_fase']))
         if ref is None:
-            c4.metric(f"Tiempo de ciclo {etiqueta}", f"{s['t'][-1]:.2f} s")
-            c5.metric(f"Posición final pieza {etiqueta}", f"{pos_final:.2f} mm")
+            c4.metric(f"Cycle time {etiqueta}", f"{s['t'][-1]:.2f} s")
+            c5.metric(f"Final part position {etiqueta}", f"{pos_final:.2f} mm")
         else:
-            c4.metric(f"Tiempo de ciclo {etiqueta}", f"{s['t'][-1]:.2f} s",
+            c4.metric(f"Cycle time {etiqueta}", f"{s['t'][-1]:.2f} s",
                       delta=f"{(s['t'][-1] - ref['t'][-1]):.2f} s vs A", delta_color="inverse")
             ref_pos = ref["pos"][-1] + ref["d_desliza"]
-            c5.metric(f"Posición final pieza {etiqueta}", f"{pos_final:.2f} mm",
+            c5.metric(f"Final part position {etiqueta}", f"{pos_final:.2f} mm",
                       delta=f"{pos_final - ref_pos:.2f} mm vs A", delta_color="off")
 
     with st.container(border=True):
-        st.markdown("**Resumen del ciclo**")
+        st.markdown("**Cycle summary**")
         fila_resumen(A, "A")
         if comparar:
             fila_resumen(B, "B", ref=A)
 
     tab_mov, tab_slip, tab_ab, tab_fund = st.tabs([
-        "📈 Movimiento", "⚠️ Deslizamiento", "⚖️ Perfil A vs B", "📚 Fundamentos",
+        "📈 Motion", "⚠️ Slip", "⚖️ Profile A vs B", "📚 Fundamentals",
     ])
 
     # ------------------------------------------
     with tab_mov:
         st.plotly_chart(figura_movimiento_conveyor(A, B))
         st.caption(
-            "Etiquetas: aceleración de cada rampa en G, con la aceleración efectiva (mm/s²) y su duración — "
-            "verde = dentro de μ, rojo = supera μ, borde grueso = fase más crítica. En crucero la aceleración es 0 G. "
-            "Bandas: fases del PLC del Perfil A. Pasa el cursor sobre la curva de velocidad para ver la posición x."
+            "Labels: acceleration of each ramp in G, with the effective acceleration (mm/s²) and its duration — "
+            "green = within μ, red = exceeds μ, thick border = most critical phase. While cruising the acceleration "
+            "is 0 G. Bands: Profile A PLC phases. Hover over the velocity curve to see the position x."
         )
 
-        st.subheader("🎯 Posicionamiento y tiempo de ciclo (Perfil A)")
+        st.subheader("🎯 Positioning & cycle time (Profile A)")
         col5, col6, col7, col8 = st.columns(4)
         col5.metric("Conveyor Overrun", f"{A['overrun']:.2f} mm")
         col6.metric("Overrun Time", f"{A['overrun_time']*1000:.0f} ms")
-        col7.metric("Posición Final Pieza", f"{(A['pos'][-1] + A['d_desliza']):.2f} mm")
-        col8.metric("Tiempo Total de Movimiento", f"{A['t'][-1]:.2f} s")
+        col7.metric("Final Part Position", f"{(A['pos'][-1] + A['d_desliza']):.2f} mm")
+        col8.metric("Total Motion Time", f"{A['t'][-1]:.2f} s")
 
-        st.subheader("🧭 Fases del ciclo")
+        st.subheader("🧭 Cycle phases")
         filas = tabla_fases_conveyor(A, "A" if comparar else None)
         if comparar:
             filas += tabla_fases_conveyor(B, "B")
@@ -1456,60 +1460,60 @@ def pagina_conveyor():
     with tab_slip:
         st.plotly_chart(figura_fases_conveyor(A, B))
 
-        st.subheader("Aceleración en Gs por transición de estados (Perfil A)")
+        st.subheader("Acceleration in G per state transition (Profile A)")
         st.caption(
-            "El conveyor lineal tiene tres transiciones de velocidad donde la pieza experimenta aceleración: "
-            "el arranque (ACCEL_FAST), el frenado a velocidad de creep (DECEL_TO_SLOW), y el frenado final "
-            "(DECEL_TO_STOP). Cada una se evalúa por separado contra μ."
+            "The linear conveyor has three speed transitions where the part experiences acceleration: "
+            "start-up (ACCEL_FAST), braking to creep speed (DECEL_TO_SLOW), and the final stop "
+            "(DECEL_TO_STOP). Each one is checked against μ separately."
         )
         fa1, fa2, fa3 = st.columns(3)
-        fa1.metric("ACCEL_FAST (arranque)", f"{det_a['g_accel']:.3f} G",
-                   delta="🔴 DESLIZA" if det_a['se_desliza_accel'] else "🟢 OK", delta_color="off")
-        fa2.metric("DECEL_TO_SLOW (frenado a creep)", f"{det_a['g_decel']:.3f} G",
-                   delta="🔴 DESLIZA" if det_a['se_desliza_decel'] else "🟢 OK", delta_color="off")
-        fa3.metric("DECEL_TO_STOP (frenado final)", f"{A['g_conv']:.3f} G",
-                   delta="🔴 DESLIZA" if det_a['se_desliza_stop_fase'] else "🟢 OK", delta_color="off")
+        fa1.metric("ACCEL_FAST (start-up)", f"{det_a['g_accel']:.3f} G",
+                   delta="🔴 SLIP" if det_a['se_desliza_accel'] else "🟢 OK", delta_color="off")
+        fa2.metric("DECEL_TO_SLOW (braking to creep)", f"{det_a['g_decel']:.3f} G",
+                   delta="🔴 SLIP" if det_a['se_desliza_decel'] else "🟢 OK", delta_color="off")
+        fa3.metric("DECEL_TO_STOP (final stop)", f"{A['g_conv']:.3f} G",
+                   delta="🔴 SLIP" if det_a['se_desliza_stop_fase'] else "🟢 OK", delta_color="off")
 
         fb1, fb2 = st.columns(2)
-        fb1.metric("🔺 Fase Más Crítica", det_a['peor_fase_label'].split(" (")[0], help=det_a['peor_fase_label'])
-        fb2.metric("🛡️ Factor de Seguridad de la Fase Más Crítica", fmt_fs(det_a['factor_seguridad_fase']))
+        fb1.metric("🔺 Most Critical Phase", det_a['peor_fase_label'].split(" (")[0], help=det_a['peor_fase_label'])
+        fb2.metric("🛡️ Safety Factor of the Most Critical Phase", fmt_fs(det_a['factor_seguridad_fase']))
 
         if det_a['se_desliza_alguna_fase'] and not det_a['se_desliza_stop_fase']:
             st.warning(
-                f"⚠️ **Diferencia detectada:** el frenado final está ESTABLE, pero **{det_a['peor_fase_label']}** "
-                f"presenta {det_a['g_max_fase']:.3f} G, que **supera** μ ({ss.mu_a:.2f} G)."
+                f"⚠️ **Difference detected:** the final stop is STABLE, but **{det_a['peor_fase_label']}** "
+                f"reaches {det_a['g_max_fase']:.3f} G, which **exceeds** μ ({ss.mu_a:.2f} G)."
             )
         elif det_a['se_desliza_alguna_fase']:
-            st.error(f"🔴 Al menos una fase supera μ — la más crítica es **{det_a['peor_fase_label']}**.")
+            st.error(f"🔴 At least one phase exceeds μ — the most critical is **{det_a['peor_fase_label']}**.")
         else:
-            st.success("🟢 Las tres transiciones de velocidad están dentro del límite de fricción.")
+            st.success("🟢 All three speed transitions are within the friction limit.")
 
         st.divider()
-        st.subheader("📊 Inercia y deslizamiento de la pieza en el frenado final (Perfil A)")
+        st.subheader("📊 Inertia & part slip at the final stop (Profile A)")
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Deceleración del Conveyor", f"{A['g_conv']:.3f} G")
-        col2.metric("Límite de Fricción (μ)", f"{ss.mu_a:.2f} G")
-        col3.metric("Estabilidad de la Carga", estado_txt(A['desliza']))
-        col4.metric("Deslizamiento Relativo",
+        col1.metric("Conveyor Deceleration", f"{A['g_conv']:.3f} G")
+        col2.metric("Friction Limit (μ)", f"{ss.mu_a:.2f} G")
+        col3.metric("Load Stability", estado_txt(A['desliza']))
+        col4.metric("Relative Part Slip",
                     f"{A['d_desliza']:.3f} mm ({A['d_desliza']*1000:.0f} µm)" if A['desliza'] else "0.000 mm")
 
         col_s1, col_s2 = st.columns(2)
-        col_s1.metric("🛡️ Factor de Seguridad (μ / g_conv)", fmt_fs(det_a['factor_seguridad']))
-        col_s2.metric("🎯 μ mínimo requerido para NO deslizar", f"{det_a['mu_minimo_requerido']:.3f}")
+        col_s1.metric("🛡️ Safety Factor (μ / g_conv)", fmt_fs(det_a['factor_seguridad']))
+        col_s2.metric("🎯 Minimum μ required to NOT slip", f"{det_a['mu_minimo_requerido']:.3f}")
 
-        titulo = ("🔍 Ver desglose de cálculo paso a paso (Perfil A)" if A['desliza']
-                  else "ℹ️ Ver cálculo de estabilidad y deceleración (Perfil A)")
+        titulo = ("🔍 View step-by-step calculation breakdown (Profile A)" if A['desliza']
+                  else "ℹ️ View stability & deceleration math (Profile A)")
         with st.expander(titulo):
-            st.markdown("### 🧮 Desglose del cálculo (valores simulados)")
+            st.markdown("### 🧮 Live Calculation Breakdown (Simulated Values)")
 
-            st.markdown("**Paso 1: Deceleración mecánica máxima (piso)**")
+            st.markdown("**Step 1: Mechanical Maximum Deceleration (Floor Limit)**")
             st.latex(L(
                 f"a_{{~text{{mech,max}}}} = ~frac{{v_{{~text{{slow}}}}}}{{20~,~text{{ms}}}} = "
                 f"~frac{{{ss.speed_slow_a:.1f}~,~text{{mm/s}}}}{{0.020~,~text{{s}}}} = "
                 f"~mathbf{{{det_a['a_mechanical_max']:.1f}~,~text{{mm/s}}^2}}"
             ))
 
-            st.markdown("**Paso 2: Deceleración efectiva de paro (RAMP_STOP limitado por el piso mecánico)**")
+            st.markdown("**Step 2: Effective Stop Deceleration (RAMP_STOP capped by the mechanical limit)**")
             st.latex(L(
                 f"a_{{~text{{stop}}}} = ~min({ss.ramp_stop_a:.1f}~,~text{{mm/s}}^2, "
                 f"{det_a['a_mechanical_max']:.1f}~,~text{{mm/s}}^2) = ~mathbf{{{det_a['a_stop_conveyor']:.1f}~,~text{{mm/s}}^2}} "
@@ -1520,16 +1524,16 @@ def pagina_conveyor():
                 f"{{9810~,~text{{mm/s}}^2}} = ~mathbf{{{A['g_conv']:.3f}~,~text{{G}}}}"
             ))
 
-            st.markdown("**Paso 3: Aceleración máxima admisible por fricción**")
+            st.markdown("**Step 3: Maximum Allowable Friction Acceleration**")
             st.latex(L(
                 f"a_{{~text{{max~_piece}}}} = ~mu ~cdot g = {ss.mu_a:.2f} ~cdot 9810~,~text{{mm/s}}^2 "
                 f"= {det_a['a_max_pieza']:.2f}~,~text{{mm/s}}^2 ~quad (~mu = ~mathbf{{{ss.mu_a:.2f}~,~text{{G}}}})"
             ))
 
-            st.markdown("**Paso 4: Criterio de deslizamiento**")
+            st.markdown("**Step 4: Slip Decision Criterion**")
             if A['desliza']:
-                st.error(f"🔴 **DESLIZAMIENTO DETECTADO:** g_conv ({A['g_conv']:.3f} G) > μ ({ss.mu_a:.2f} G).")
-                st.markdown("**Paso 5: Distancia de deslizamiento relativo (Δd)**")
+                st.error(f"🔴 **SLIP DETECTED:** g_conv ({A['g_conv']:.3f} G) > μ ({ss.mu_a:.2f} G).")
+                st.markdown("**Step 5: Relative Slip Distance (Δd)**")
                 st.latex(L(
                     f"d_{{~text{{piece}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{max~_piece}}}}}} = "
                     f"{det_a['dist_freno_pieza']:.3f}~,~text{{mm}}"
@@ -1543,16 +1547,16 @@ def pagina_conveyor():
                     f"~mathbf{{{A['d_desliza']:.3f}~,~text{{mm}}}}"
                 ))
             else:
-                st.success(f"🟢 **CARGA ESTABLE:** g_conv ({A['g_conv']:.3f} G) ≤ μ ({ss.mu_a:.2f} G).")
+                st.success(f"🟢 **STABLE LOAD:** g_conv ({A['g_conv']:.3f} G) ≤ μ ({ss.mu_a:.2f} G).")
 
     # ------------------------------------------
     with tab_ab:
         if not comparar:
-            st.info("Activa **Comparar con Perfil B** en la barra lateral para comparar dos configuraciones del PLC. "
-                    "El Perfil B arranca como copia del Perfil A.")
+            st.info("Turn on **Compare with Profile B** in the sidebar to compare two PLC configurations. "
+                    "Profile B starts as a copy of Profile A.")
         else:
-            st.subheader("Aceleración por transición de estados — Perfil B")
-            st.caption("Los deltas son B − A (rojo = B exige más fricción que A).")
+            st.subheader("Acceleration per state transition — Profile B")
+            st.caption("Deltas are B − A (red = B demands more friction than A).")
             fa1b, fa2b, fa3b = st.columns(3)
             fa1b.metric("ACCEL_FAST B", f"{det_b['g_accel']:.3f} G",
                         delta=f"{(det_b['g_accel'] - det_a['g_accel']):.3f} G", delta_color="inverse")
@@ -1560,25 +1564,25 @@ def pagina_conveyor():
                         delta=f"{(det_b['g_decel'] - det_a['g_decel']):.3f} G", delta_color="inverse")
             fa3b.metric("DECEL_TO_STOP B", f"{B['g_conv']:.3f} G",
                         delta=f"{(B['g_conv'] - A['g_conv']):.3f} G", delta_color="inverse")
-            st.caption(f"Fase más crítica en B: **{det_b['peor_fase_label']}** ({det_b['g_max_fase']:.3f} G)")
+            st.caption(f"Most critical phase in B: **{det_b['peor_fase_label']}** ({det_b['g_max_fase']:.3f} G)")
 
             st.divider()
-            st.subheader("⚖️ Perfil A vs Perfil B — frenado final y posicionamiento")
+            st.subheader("⚖️ Profile A vs Profile B — final stop & positioning")
             c_b1, c_b2, c_b3, c_b4 = st.columns(4)
-            c_b1.metric("Deceleración Perfil B", f"{B['g_conv']:.3f} G",
+            c_b1.metric("Deceleration Profile B", f"{B['g_conv']:.3f} G",
                         delta=f"{(B['g_conv'] - A['g_conv']):.3f} G", delta_color="inverse")
-            c_b2.metric("Deslizamiento Pieza Perfil B", f"{B['d_desliza']:.3f} mm",
+            c_b2.metric("Part Slip Profile B", f"{B['d_desliza']:.3f} mm",
                         delta=f"{(B['d_desliza'] - A['d_desliza']):.3f} mm", delta_color="inverse")
-            c_b3.metric("Overrun Perfil B", f"{B['overrun']:.2f} mm",
+            c_b3.metric("Overrun Profile B", f"{B['overrun']:.2f} mm",
                         delta=f"{(B['overrun'] - A['overrun']):.2f} mm", delta_color="inverse")
-            c_b4.metric("Overrun Time Perfil B", f"{B['overrun_time']*1000:.0f} ms",
+            c_b4.metric("Overrun Time Profile B", f"{B['overrun_time']*1000:.0f} ms",
                         delta=f"{(B['overrun_time'] - A['overrun_time'])*1000:.0f} ms", delta_color="inverse")
 
             c_b5, c_b6 = st.columns(2)
-            c_b5.metric("Posición Final Pieza B", f"{(B['pos'][-1] + B['d_desliza']):.2f} mm",
+            c_b5.metric("Final Part Position B", f"{(B['pos'][-1] + B['d_desliza']):.2f} mm",
                         delta=f"{(B['pos'][-1] + B['d_desliza']) - (A['pos'][-1] + A['d_desliza']):.2f} mm",
                         delta_color="inverse")
-            c_b6.metric("Tiempo de Ciclo Perfil B", f"{B['t'][-1]:.2f} s",
+            c_b6.metric("Cycle Time Profile B", f"{B['t'][-1]:.2f} s",
                         delta=f"{(B['t'][-1] - A['t'][-1]):.2f} s", delta_color="inverse")
 
     # ------------------------------------------
@@ -1587,16 +1591,16 @@ def pagina_conveyor():
 
 
 # ==========================================
-# FUNDAMENTOS MATEMÁTICOS Y FÍSICOS
+# MATHEMATICAL & PHYSICAL BACKGROUND
 # ==========================================
 def fundamentos_comunes(unidad_a, simbolo):
-    """Secciones compartidas: piso mecánico, deceleración efectiva y umbral de fricción."""
-    st.subheader("1. Piso de elasticidad mecánica (deceleración máxima alcanzable)")
+    """Shared section: mechanical floor (maximum achievable deceleration)."""
+    st.subheader("1. Mechanical Elasticity Floor (Maximum Achievable Deceleration)")
     st.markdown(L(
-        f"`RAMP_STOP` es una **deceleración comandada directamente** ({unidad_a}), consistente con "
-        "`RAMP_ACCEL`/`RAMP_DECEL` — NO es un tiempo. La elasticidad mecánica impone un tiempo mínimo de "
-        "paro de $T_{~text{min}} = 20~,~text{ms}$, que se traduce en una deceleración máxima físicamente "
-        "alcanzable:"
+        f"`RAMP_STOP` is a **directly commanded deceleration** ({unidad_a}), consistent with "
+        "`RAMP_ACCEL`/`RAMP_DECEL` — it is NOT a time value. Mechanical compliance imposes a minimum "
+        "stopping time of $T_{~text{min}} = 20~,~text{ms}$, which translates into a maximum physically "
+        "achievable deceleration:"
     ))
     if simbolo == "a":
         st.latex(L(r"a_{~text{mech,max}} = ~frac{v_{~text{slow}}}{T_{~text{min}}}"))
@@ -1605,121 +1609,121 @@ def fundamentos_comunes(unidad_a, simbolo):
 
 
 def fundamentos_conveyor():
-    st.header("📐 Motor físico y fórmulas cinemáticas — Conveyor")
+    st.header("📐 Physics Engine & Kinematic Formulas — Conveyor")
     st.markdown(
-        "Modelos analíticos usados para simular la dinámica del conveyor, las fuerzas de deceleración, "
-        "los límites de fricción y el desplazamiento inercial de la pieza transportada."
+        "Analytical models used to simulate conveyor dynamics, deceleration forces, friction boundaries "
+        "and the inertial displacement of the transported part."
     )
     fundamentos_comunes("mm/s²", "a")
 
-    st.subheader("2. Deceleración efectiva de paro")
+    st.subheader("2. Effective Stop Deceleration")
     st.latex(L(
         r"a_{~text{stop}} = ~begin{cases} a_{~text{mech,max}} & ~text{RAMP~_STOP} = 0 \\ "
         r"~min(~text{RAMP~_STOP}, a_{~text{mech,max}}) & ~text{RAMP~_STOP} > 0 ~end{cases}"
     ))
     st.latex(L(r"g_{~text{conv}} = ~frac{a_{~text{stop}}}{9810}"))
 
-    st.subheader("3. Umbral de fricción estática y criterio de deslizamiento")
+    st.subheader("3. Static Friction Threshold & Slip Determination")
     st.latex(L(r"a_{~text{max~_piece}} = ~mu ~cdot g = ~mu ~cdot 9810~,~text{mm/s}^2"))
 
-    st.subheader("4. Estimación del deslizamiento relativo de la pieza")
+    st.subheader("4. Relative Part Slip Estimation")
     st.latex(L(r"d_{~text{piece}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{max~_piece}}}"))
     st.latex(L(r"d_{~text{conveyor}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{stop}}}"))
     st.latex(L(r"~Delta d = d_{~text{piece}} - d_{~text{conveyor}}"))
 
-    st.subheader("5. Factor de seguridad y fricción mínima requerida")
-    st.latex(L(r"~text{Factor de Seguridad} = ~frac{~mu}{g_{~text{conv}}} ~qquad ~mu_{~text{min}} = g_{~text{conv}}"))
+    st.subheader("5. Safety Factor & Minimum Required Friction")
+    st.latex(L(r"~text{Safety Factor} = ~frac{~mu}{g_{~text{conv}}} ~qquad ~mu_{~text{min}} = g_{~text{conv}}"))
 
-    st.subheader("6. Disposición de sensores: ambos cerca del final del recorrido")
+    st.subheader("6. Sensor Layout: Both Sensors Near the End of Travel")
     st.latex(L(r"P_{~text{stop}} = L_{~text{total}} ~quad P_{~text{reduction}} = L_{~text{total}} - S_{~text{distance}}"))
 
-    st.subheader("7. Validación de la distancia entre sensores")
+    st.subheader("7. Sensor Distance Validation")
     st.latex(L(r"d_{~text{needed}} = ~frac{v_{~text{fast}}^2 - v_{~text{slow}}^2}{2 ~cdot ~text{RAMP~_DECEL}}"))
 
-    st.subheader("8. Aceleración por transición de estados")
+    st.subheader("8. Acceleration per State Transition")
     st.latex(L(r"g_{~text{accel}} = ~frac{~text{RAMP~_ACCEL}}{9810}"))
     st.latex(L(r"g_{~text{decel}} = ~frac{~text{RAMP~_DECEL}}{9810}"))
     st.latex(L(r"g_{~text{stop}} = ~frac{a_{~text{stop}}}{9810}"))
-    st.latex(L(r"g_{~text{max~_fase}} = ~max~left(g_{~text{accel}}, g_{~text{decel}}, g_{~text{stop}}~right)"))
+    st.latex(L(r"g_{~text{max~_phase}} = ~max~left(g_{~text{accel}}, g_{~text{decel}}, g_{~text{stop}}~right)"))
 
-    st.subheader("9. Máquina de estados e integración numérica")
+    st.subheader("9. State Machine & Numerical Integration")
     st.markdown(L(
-        "El PLC se modela como la secuencia `ACCEL_FAST → CRUISE_FAST → DECEL_TO_SLOW → CRUISE_SLOW → "
-        "DECEL_TO_STOP`, integrada con paso $~Delta t = 1~,~text{ms}$. La posición acumulada es la que "
-        "dispara los sensores de reducción y paro:"
+        "The PLC is modeled as the sequence `ACCEL_FAST → CRUISE_FAST → DECEL_TO_SLOW → CRUISE_SLOW → "
+        "DECEL_TO_STOP`, integrated with a step of $~Delta t = 1~,~text{ms}$. The accumulated position is "
+        "what triggers the slowdown and stop sensors:"
     ))
     st.latex(L(r"x_i = x_{i-1} + v_i ~cdot ~Delta t"))
 
 
 def fundamentos_mesa():
-    st.header("📐 Motor físico y fórmulas cinemáticas — Mesa giratoria")
+    st.header("📐 Physics Engine & Kinematic Formulas — Turntable")
     st.markdown(
-        "Modelos analíticos usados para simular el giro de la mesa, las componentes tangencial y centrípeta "
-        "que siente la pieza, y la conversión de posiciones angulares al riel de sensores."
+        "Analytical models used to simulate the table rotation, the tangential and centripetal components "
+        "felt by the part, and the conversion of angular positions to the sensor rail."
     )
     fundamentos_comunes("°/s²", "alpha")
 
-    st.subheader("2. Deceleración angular efectiva y componente tangencial (frenado)")
+    st.subheader("2. Effective Angular Deceleration & Tangential Component (Braking)")
     st.latex(L(
-        r"~alpha_{~text{stop}} = ~begin{cases} ~alpha_{~text{mech,max}} & ~text{RAMP~_STOP~_MESA} = 0 \\ "
-        r"~min(~text{RAMP~_STOP~_MESA}, ~alpha_{~text{mech,max}}) & ~text{RAMP~_STOP~_MESA} > 0 ~end{cases}"
+        r"~alpha_{~text{stop}} = ~begin{cases} ~alpha_{~text{mech,max}} & ~text{RAMP~_STOP~_TABLE} = 0 \\ "
+        r"~min(~text{RAMP~_STOP~_TABLE}, ~alpha_{~text{mech,max}}) & ~text{RAMP~_STOP~_TABLE} > 0 ~end{cases}"
     ))
     st.latex(L(r"a_{~text{tan~_stop}} = ~alpha_{~text{stop,rad}} ~cdot R_{~text{max}} ~quad [~text{mm/s}^2]"))
     st.latex(L(r"g_{~text{conv}} = ~frac{a_{~text{tan~_stop}}}{9810}"))
 
-    st.subheader("3. Umbral de fricción estática")
+    st.subheader("3. Static Friction Threshold")
     st.latex(L(r"a_{~text{max~_piece}} = ~mu ~cdot g = ~mu ~cdot 9810~,~text{mm/s}^2"))
 
-    st.subheader("4. Analogía angular → lineal")
-    st.latex(L(r"R_{~text{max}} = ~frac{~text{Longitud Total de Pieza}}{2}"))
-    st.latex(L(r"v_{~text{lineal}} = ~omega_{~text{rad}} ~cdot R_{~text{max}} ~quad a_{~text{lineal}} = ~alpha_{~text{rad}} ~cdot R_{~text{max}}"))
+    st.subheader("4. Angular-to-Linear Analogy")
+    st.latex(L(r"R_{~text{max}} = ~frac{~text{Total Part Length}}{2}"))
+    st.latex(L(r"v_{~text{linear}} = ~omega_{~text{rad}} ~cdot R_{~text{max}} ~quad a_{~text{linear}} = ~alpha_{~text{rad}} ~cdot R_{~text{max}}"))
 
-    st.subheader("5. Posición angular por integración en el tiempo")
+    st.subheader("5. Angular Position via Time Integration")
     st.markdown(L(
-        "El ángulo girado es la integral de la velocidad angular. En la simulación discreta es la suma "
-        "acumulada que dispara los sensores de reducción y paro (el valor en cada instante aparece al pasar "
-        "el cursor sobre la gráfica de velocidad):"
+        "The rotated angle is the integral of the angular velocity. In the discrete simulation it is the "
+        "running sum that triggers the slowdown and stop sensors (its value at each instant shows when "
+        "hovering over the velocity chart):"
     ))
     st.latex(L(r"~theta(t) = ~int_0^t ~omega(~tau)~,d~tau ~qquad ~theta_i = ~theta_{i-1} + ~omega_i ~cdot ~Delta t"))
 
-    st.subheader("6. Componente centrípeta (crucero a velocidad constante)")
+    st.subheader("6. Centripetal Component (Constant-Speed Cruise)")
     st.latex(L(r"a_{~text{cent}} = ~omega_{~text{rad}}^2 ~cdot R_{~text{max}} ~quad [~text{mm/s}^2]"))
     st.latex(L(r"g_{~text{cent}} = ~frac{a_{~text{cent}}}{9810}"))
 
-    st.subheader("7. Aceleración resultante en los instantes críticos")
-    st.latex(L(r"a_{~text{resultante}} = ~sqrt{a_{~text{tangencial}}^2 + a_{~text{centrípeta}}^2}"))
+    st.subheader("7. Combined Resultant Acceleration at Critical Instants")
+    st.latex(L(r"a_{~text{resultant}} = ~sqrt{a_{~text{tangential}}^2 + a_{~text{centripetal}}^2}"))
 
-    st.subheader("8. Deslizamiento relativo al frenar")
-    st.latex(L(r"d_{~text{piece}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{max~_piece}}} ~quad d_{~text{mesa}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{tan~_stop}}}"))
-    st.latex(L(r"~Delta d = d_{~text{piece}} - d_{~text{mesa}} ~qquad ~Delta ~theta = ~frac{~Delta d}{R_{~text{max}}}"))
+    st.subheader("8. Relative Slip When Stopping")
+    st.latex(L(r"d_{~text{piece}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{max~_piece}}} ~quad d_{~text{table}} = ~frac{v_{~text{slow}}^2}{2 ~cdot a_{~text{tan~_stop}}}"))
+    st.latex(L(r"~Delta d = d_{~text{piece}} - d_{~text{table}} ~qquad ~Delta ~theta = ~frac{~Delta d}{R_{~text{max}}}"))
 
-    st.subheader("9. Factor de seguridad")
-    st.latex(L(r"~text{FS} = ~frac{~mu}{g} ~quad ~text{(frenado, crucero o resultante)}"))
+    st.subheader("9. Safety Factor")
+    st.latex(L(r"~text{SF} = ~frac{~mu}{g} ~quad ~text{(braking, cruise or resultant)}"))
 
-    st.subheader("10. Sensores: posición y validación")
+    st.subheader("10. Sensors: Position & Validation")
     st.latex(L(r"~theta_{~text{stop}} = ~theta_{~text{total}} ~quad ~theta_{~text{reduction}} = ~theta_{~text{total}} - ~theta_{~text{sensor~_dist}}"))
-    st.latex(L(r"~theta_{~text{needed}} = ~frac{~omega_{~text{fast}}^2 - ~omega_{~text{slow}}^2}{2 ~cdot ~text{RAMP~_DECEL~_MESA}}"))
+    st.latex(L(r"~theta_{~text{needed}} = ~frac{~omega_{~text{fast}}^2 - ~omega_{~text{slow}}^2}{2 ~cdot ~text{RAMP~_DECEL~_TABLE}}"))
 
-    st.subheader("11. Riel de sensores: conversión ángulo ↔ mm para mantenimiento")
-    st.latex(L(r"~theta_{~text{sensor}} = ~frac{s_{~text{mm}}}{R_{~text{sensor}}} ~quad ~text{(Arco, radianes → grados)}"))
-    st.latex(L(r"~theta_{~text{sensor}} = 2 ~arcsin~left(~frac{s_{~text{mm}}}{2R_{~text{sensor}}}~right) ~quad ~text{(Cuerda)}"))
+    st.subheader("11. Sensor Rail: Angle ↔ mm Conversion for Maintenance")
+    st.latex(L(r"~theta_{~text{sensor}} = ~frac{s_{~text{mm}}}{R_{~text{sensor}}} ~quad ~text{(Arc, radians → degrees)}"))
+    st.latex(L(r"~theta_{~text{sensor}} = 2 ~arcsin~left(~frac{s_{~text{mm}}}{2R_{~text{sensor}}}~right) ~quad ~text{(Chord)}"))
     st.latex(L(r"s_{~text{arc}} = R_{~text{sensor}} ~cdot ~theta_{~text{rad}}"))
     st.latex(L(r"s_{~text{chord}} = 2R_{~text{sensor}} ~sin~left(~frac{~theta_{~text{rad}}}{2}~right)"))
 
-    st.subheader("12. Limitación de alcance: deslizamiento libre en un marco giratorio")
+    st.subheader("12. Scope Limitation: Free-Sliding Dynamics on a Rotating Frame")
     st.markdown(
-        "Una simulación totalmente rigurosa de un objeto que desliza libremente sobre una plataforma giratoria "
-        "requiere resolver el movimiento en un marco de referencia no inercial, con las pseudo-fuerzas de "
-        "Coriolis y de Euler. Este modelo evalúa el umbral de deslizamiento, no la trayectoria posterior."
+        "A fully rigorous simulation of an object sliding freely on a rotating platform requires solving "
+        "the motion in a non-inertial rotating reference frame, with Coriolis and Euler pseudo-forces. "
+        "This model evaluates the slip threshold, not the subsequent trajectory."
     )
 
 
 # ==========================================
-# NAVEGACIÓN: DOS SECCIONES
+# NAVIGATION: TWO SECTIONS
 # ==========================================
 pagina = st.navigation(
     [
-        st.Page(pagina_mesa, title="Mesa giratoria", icon=":material/360:", url_path="mesa", default=True),
+        st.Page(pagina_mesa, title="Turntable", icon=":material/360:", url_path="turntable", default=True),
         st.Page(pagina_conveyor, title="Conveyor", icon=":material/conveyor_belt:", url_path="conveyor"),
     ],
     position="top",
