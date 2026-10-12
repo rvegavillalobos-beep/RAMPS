@@ -1,0 +1,33 @@
+# Visual theme — technical console look: light gray, monospace type, single orange accent.
+# Extra styling (panels, tabs, alerts, charts) lives in the VISUAL THEME block of app.py.
+
+[theme]
+base = "light"
+primaryColor = "#FF4F1A"
+backgroundColor = "#ECECE9"
+secondaryBackgroundColor = "#F4F4F1"
+textColor = "#141414"
+linkColor = "#FF4F1A"
+borderColor = "#D4D4CF"
+dataframeBorderColor = "#D4D4CF"
+dataframeHeaderBackgroundColor = "#F1F1EE"
+showWidgetBorder = true
+showSidebarBorder = true
+baseRadius = "none"
+buttonRadius = "none"
+baseFontSize = 14
+font = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap"
+headingFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap"
+codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap"
+# Status palette: orange = problem, ink = fine, gray = neutral
+redColor = "#FF4F1A"
+orangeColor = "#FF4F1A"
+yellowColor = "#FF4F1A"
+greenColor = "#3A3A37"
+blueColor = "#76766F"
+grayColor = "#76766F"
+chartCategoricalColors = ["#141414", "#FF4F1A", "#9A9A93", "#5A5A55", "#C9C9C2"]
+
+[theme.sidebar]
+backgroundColor = "#FAFAF8"
+secondaryBackgroundColor = "#F1F1EE"
