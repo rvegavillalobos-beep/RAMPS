@@ -107,18 +107,22 @@ _EJE = dict(
     showline=True, linecolor="#C3CBD0", linewidth=1, ticks="outside", ticklen=4, tickwidth=1,
     tickcolor="#C3CBD0", tickfont=dict(size=11, color=MUTED), title=dict(font=dict(size=11, color=INK_2), standoff=10),
 )
-pio.templates["ramps"] = go.layout.Template(layout=dict(
-    font=dict(family=FONT_UI, size=12, color=INK),
-    title=dict(font=dict(family=FONT_UI, size=14, color=INK), x=0.01, xanchor="left"),
-    paper_bgcolor=PANEL,
-    plot_bgcolor=PANEL,
-    colorway=[ACCENT, VIOLET, INK, COL_TAN],
-    xaxis=_EJE, yaxis=_EJE,
-    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=11, color=INK_2)),
-    hoverlabel=dict(bgcolor=PANEL, bordercolor=LINE, font=dict(family=FONT_UI, size=12, color=INK)),
-    bargap=0.42, bargroupgap=0.12,
-))
-pio.templates.default = "plotly_white+ramps"
+# Every trace sets its own color, so the template carries no color list. The theme is cosmetic:
+# if this Plotly version rejects any of it, fall back to plain white instead of stopping the app.
+try:
+    pio.templates["ramps"] = go.layout.Template(layout=dict(
+        font=dict(family=FONT_UI, size=12, color=INK),
+        title=dict(font=dict(family=FONT_UI, size=14, color=INK), x=0.01, xanchor="left"),
+        paper_bgcolor=PANEL,
+        plot_bgcolor=PANEL,
+        xaxis=_EJE, yaxis=_EJE,
+        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=11, color=INK_2)),
+        hoverlabel=dict(bgcolor=PANEL, bordercolor=LINE, font=dict(family=FONT_UI, size=12, color=INK)),
+        bargap=0.42, bargroupgap=0.12,
+    ))
+    pio.templates.default = "plotly_white+ramps"
+except Exception:
+    pio.templates.default = "plotly_white"
 
 # Colors below mirror the palette constants above.
 CSS_TEMA = """
