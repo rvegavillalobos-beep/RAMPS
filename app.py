@@ -1,6 +1,7 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
+import plotly.io as pio
 from plotly.subplots import make_subplots
 
 # ==========================================
@@ -19,7 +20,7 @@ def L(template: str) -> str:
 # ==========================================
 st.set_page_config(
     page_title="Kinematic Simulator — Turntable & Conveyor",
-    page_icon="⚙️",
+    page_icon=":material/settings:",
     layout="wide",
 )
 
@@ -51,16 +52,29 @@ def mm_to_angle(mm, radius, mode="Arc (R·θ)"):
 T_MIN_MECANICO_MS = 20.0
 T_MIN_MECANICO_S = T_MIN_MECANICO_MS / 1000.0
 
+# Palette (technical console look): ink + grays, orange only for what needs attention
+FONT_MONO = "'JetBrains Mono', 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+INK = "#141414"
+INK_2 = "#3A3A37"
+MUTED = "#76766F"
+LINE = "#D4D4CF"
+GRID = "#E6E6E1"
+PANEL = "#FAFAF8"
+ACCENT = "#FF4F1A"
+
 # Colors (consistent across the app)
-COL_A = "#1f77b4"
-COL_B = "#9467bd"
-COL_SENSOR_RED = "#ff7f0e"
-COL_SENSOR_STOP = "#d62728"
-COL_OK = "#2ca02c"
-COL_SLIP = "#d62728"
-COL_TAN = "#ff7f0e"
-COL_CENT = "#17becf"
-COL_NEUTRO = "#7f7f7f"
+COL_A = INK
+COL_B = "#9A9A93"
+COL_B_STOP = "#5A5A55"
+COL_B_RED = "#B9B9B2"
+COL_SENSOR_RED = "#5A5A55"
+COL_SENSOR_STOP = INK
+COL_OK = INK
+COL_SLIP = ACCENT
+COL_TAN = "#A3A39C"
+COL_CENT = "#5A5A55"
+COL_RESULT = INK
+COL_NEUTRO = "#8C8C85"
 
 # PLC state machine states (same order in both engines)
 FASES = ["ACCEL_FAST", "CRUISE_FAST", "DECEL_TO_SLOW", "CRUISE_SLOW", "DECEL_TO_STOP", "DONE"]
@@ -80,6 +94,234 @@ FASE_CORTO = {
     "CRUISE_SLOW": "CREEP",
     "DECEL_TO_STOP": "STOP",
 }
+
+# ==========================================
+# VISUAL THEME (presentation only — no effect on any calculation)
+# ==========================================
+_EJE = dict(
+    showgrid=True, gridcolor=GRID, griddash="dot", gridwidth=1, zeroline=False,
+    showline=True, linecolor=INK, linewidth=1, ticks="outside", ticklen=4, tickwidth=1, tickcolor=INK,
+    tickfont=dict(size=10, color=MUTED), title=dict(font=dict(size=10, color=MUTED), standoff=8),
+)
+pio.templates["ramps"] = go.layout.Template(layout=dict(
+    font=dict(family=FONT_MONO, size=11, color=INK),
+    title=dict(font=dict(family=FONT_MONO, size=12, color=INK), x=0.005, xanchor="left"),
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="#FFFFFF",
+    colorway=[INK, ACCENT, COL_B, COL_CENT, COL_TAN],
+    xaxis=_EJE, yaxis=_EJE,
+    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10, color=INK_2)),
+    hoverlabel=dict(bgcolor="#FFFFFF", bordercolor=INK, font=dict(family=FONT_MONO, size=11, color=INK)),
+    bargap=0.32, bargroupgap=0.08,
+))
+pio.templates.default = "plotly_white+ramps"
+
+_PLUS = ("url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E"
+         "%3Cpath d='M4.5 0v9M0 4.5h9' stroke='%23A3A39C'/%3E%3C/svg%3E\")")
+
+CSS_TEMA = """
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+
+.stApp {
+  --ink: %(ink)s; --ink-2: %(ink2)s; --muted: %(muted)s; --line: %(line)s; --line-strong: #B9B9B2;
+  --panel: %(panel)s; --accent: %(accent)s; --accent-tint: #FFF1EB; --hatch: #CFCFCA;
+  --mono: %(mono)s; --plus: %(plus)s;
+  background-color: #ECECE9;
+  background-image: radial-gradient(circle at 1px 1px, rgba(20, 20, 20, .09) 1px, transparent 1.3px);
+  background-size: 18px 18px;
+  font-family: var(--mono);
+}
+.stApp, .stApp p, .stApp label, .stApp input, .stApp button { font-family: var(--mono); }
+
+/* ---- Corner crosshairs for panels ---- */
+.stApp [data-testid="stMetric"], .stApp [data-testid="stPlotlyChart"], .stApp [class*="st-key-resumen"] {
+  background-image: var(--plus), var(--plus), var(--plus), var(--plus);
+  background-position: left 5px top 5px, right 5px top 5px, left 5px bottom 5px, right 5px bottom 5px;
+  background-repeat: no-repeat;
+}
+
+/* ---- Top bar & navigation ---- */
+.stApp header[data-testid="stHeader"] { background: var(--panel); border-bottom: 1px solid var(--line); }
+.stApp a[data-testid="stTopNavLink"] { border-radius: 0; background: transparent !important; }
+.stApp a[data-testid="stTopNavLink"] span {
+  font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+}
+.stApp a[data-testid="stTopNavLink"][aria-current="page"] { box-shadow: inset 0 -2px 0 var(--accent); }
+.stApp a[data-testid="stTopNavLink"][aria-current="page"] span { color: var(--ink); font-weight: 600; }
+
+/* ---- Breadcrumb / status bar ---- */
+.hud-bar {
+  display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: .5rem 1.25rem;
+  padding: .55rem .85rem; background: var(--panel); border: 1px solid var(--line); font-size: .74rem;
+}
+.hud-path { color: var(--muted); }
+.hud-path i { font-style: normal; margin: 0 .2rem; color: var(--line-strong); }
+.hud-path b { color: var(--ink); font-weight: 600; }
+.hud-meta { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem 1.1rem; }
+.hud-kv { color: var(--muted); white-space: nowrap; }
+.hud-kv b { color: var(--ink); font-weight: 500; margin-left: .45rem; }
+.hud-chip {
+  font-size: .68rem; letter-spacing: .14em; padding: .34rem .75rem; border: 1px solid var(--ink);
+  color: var(--ink); white-space: nowrap;
+}
+.hud-chip::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: .55rem;
+  background: currentColor; vertical-align: 1px;
+}
+.hud-chip.is-crit { background: var(--accent); border-color: var(--accent); color: #fff; }
+.hud-label {
+  display: flex; justify-content: space-between; gap: 1rem; padding-bottom: .55rem; margin-bottom: .2rem;
+  border-bottom: 1px solid var(--line); font-size: .7rem; letter-spacing: .14em; color: var(--ink);
+}
+.hud-label span { color: var(--muted); letter-spacing: .04em; }
+
+/* ---- Headings ---- */
+.stApp [data-testid="stMain"] h1 {
+  font-size: 1.55rem; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; padding: .9rem 0 .2rem;
+}
+.stApp [data-testid="stMain"] h1::before { content: "["; color: var(--muted); font-weight: 300; margin-right: .3em; }
+.stApp [data-testid="stMain"] h1::after { content: "]"; color: var(--muted); font-weight: 300; margin-left: .3em; }
+.stApp h2 { font-size: 1.05rem; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.stApp [data-testid="stMain"] h3, .stApp [data-testid="stExpander"] h3 {
+  font-size: .78rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--ink);
+}
+.stApp [data-testid="stMain"] h3::before, .stApp [data-testid="stExpander"] h3::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: .65rem;
+  background: var(--accent); vertical-align: 2px;
+}
+.stApp [data-testid="stMain"] [data-testid="stHeading"]:has(h3) {
+  border-bottom: 1px solid var(--line); padding-bottom: .1rem; margin-top: .9rem;
+}
+.stApp [data-testid="stCaptionContainer"], .stApp [data-testid="stCaptionContainer"] p {
+  color: var(--muted); font-size: .74rem; line-height: 1.6;
+}
+
+/* ---- Sidebar ---- */
+.stApp [data-testid="stSidebar"] { background: var(--panel); border-right: 1px solid var(--line); }
+.stApp [data-testid="stSidebar"] h2 { font-size: .95rem; letter-spacing: .12em; }
+.stApp [data-testid="stSidebar"] h2::before { content: "["; margin-right: .25em; }
+.stApp [data-testid="stSidebar"] h2::after {
+  content: "]"; margin-left: .25em; padding-right: 1.6rem;
+  background: linear-gradient(var(--accent), var(--accent)) right center / 14px 8px no-repeat;
+}
+.stApp [data-testid="stSidebar"] [data-testid="stHeading"]:has(h3)::before {
+  content: ""; display: block; height: 9px; margin: .9rem 0 .8rem;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  background: repeating-linear-gradient(-45deg, var(--hatch) 0 1px, transparent 1px 6px);
+}
+.stApp [data-testid="stSidebar"] h3 {
+  font-size: .7rem; font-weight: 500; letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
+}
+.stApp [data-testid="stWidgetLabel"] p { font-size: .74rem; color: var(--ink-2); }
+.stApp [data-testid="stNumberInputField"] { font-variant-numeric: tabular-nums; }
+
+/* ---- Metrics as instrument tiles ---- */
+.stApp [data-testid="stMetric"] {
+  background-color: var(--panel); border: 1px solid var(--line); padding: .85rem 1rem .75rem; height: 100%%;
+}
+.stApp [data-testid="stMetricLabel"] p { font-size: .7rem; color: var(--muted); letter-spacing: .03em; }
+.stApp [data-testid="stMetricValue"] {
+  font-size: 1.4rem; font-weight: 300; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.stApp [data-testid="stMetricDelta"] { font-size: .7rem; }
+
+/* Summary panel: one wide instrument strip, columns split by hairlines */
+.stApp [class*="st-key-resumen"] {
+  background-color: var(--panel); border: 1px solid var(--line) !important; border-radius: 0 !important;
+}
+.stApp [class*="st-key-resumen"] [data-testid="stMetric"] { background: none; border: none; padding: .35rem 0 .2rem; }
+.stApp [class*="st-key-resumen"] [data-testid="stMetricValue"] { font-size: 1.75rem; }
+.stApp [class*="st-key-resumen"] [data-testid="stColumn"] + [data-testid="stColumn"] {
+  border-left: 1px solid var(--line); padding-left: 1rem;
+}
+@media (max-width: 640px) {
+  .stApp [class*="st-key-resumen"] [data-testid="stColumn"] + [data-testid="stColumn"] {
+    border-left: none; padding-left: 0; border-top: 1px solid var(--line); padding-top: .5rem;
+  }
+}
+
+/* ---- Tabs ---- */
+.stApp [data-testid="stTabs"] [data-baseweb="tab-list"] { gap: 0; border-bottom: 1px solid var(--line); }
+.stApp [data-testid="stTab"] { padding: .6rem 1.1rem; height: auto; background: transparent; }
+.stApp [data-testid="stTab"] p {
+  font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); white-space: nowrap;
+}
+.stApp [data-testid="stTab"][aria-selected="true"] p { color: var(--ink); font-weight: 600; }
+.stApp [data-testid="stTab"]:hover p { color: var(--ink); }
+.stApp [data-baseweb="tab-border"] { display: none; }
+
+/* ---- Charts ---- */
+.stApp [data-testid="stPlotlyChart"] { background-color: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+
+/* ---- Alerts as tagged console messages ---- */
+.stApp [data-testid="stAlertContainer"] {
+  border-radius: 0; background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-left: 3px solid var(--muted);
+}
+.stApp [data-testid="stAlertContainer"] [data-testid="stMarkdownContainer"],
+.stApp [data-testid="stAlertContainer"] [data-testid="stMarkdownContainer"] p { color: var(--ink); font-size: .8rem; }
+.stApp [data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]) {
+  border-left-color: var(--accent); background: var(--accent-tint);
+}
+.stApp [data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) { border-left-color: var(--accent); }
+.stApp [data-testid="stAlertContainer"]:has([data-testid="stAlertContentSuccess"]) { border-left-color: var(--ink); }
+.stApp [data-testid^="stAlertContent"] { display: flex; align-items: flex-start; gap: .8rem; }
+.stApp [data-testid^="stAlertContent"]::before {
+  flex: none; margin-top: .1rem; padding: .12rem .45rem; border: 1px solid currentColor;
+  font-size: .62rem; letter-spacing: .14em; line-height: 1.4;
+}
+.stApp [data-testid="stAlertContentError"]::before { content: "CRIT"; color: #fff; background: var(--accent); border-color: var(--accent); }
+.stApp [data-testid="stAlertContentWarning"]::before { content: "WARN"; color: var(--accent); }
+.stApp [data-testid="stAlertContentInfo"]::before { content: "INFO"; color: var(--muted); }
+.stApp [data-testid="stAlertContentSuccess"]::before { content: "OK"; color: var(--ink); }
+
+/* ---- Dividers as hatched rules ---- */
+.stApp hr {
+  height: 9px; border: none !important; margin: .9rem 0 !important; background-color: transparent;
+  border-top: 1px solid var(--line) !important; border-bottom: 1px solid var(--line) !important;
+  background-image: repeating-linear-gradient(-45deg, var(--hatch) 0 1px, transparent 1px 6px);
+}
+
+/* ---- Expanders, code, formulas ---- */
+.stApp [data-testid="stExpander"] details { border: 1px solid var(--line); border-radius: 0; background: var(--panel); }
+.stApp [data-testid="stExpander"] summary p { font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; }
+.stApp [data-testid="stMarkdownContainer"] code {
+  color: var(--ink); background: #E9E9E5; border: 1px solid var(--line); border-radius: 0; padding: .05em .35em;
+}
+.stApp .katex-display {
+  margin: .35rem 0; padding: .55rem .9rem; overflow-x: auto;
+  background: var(--panel); border-left: 2px solid var(--line-strong);
+}
+""" % dict(ink=INK, ink2=INK_2, muted=MUTED, line=LINE, panel=PANEL, accent=ACCENT, mono=FONT_MONO, plus=_PLUS)
+
+
+def aplicar_tema():
+    """Inject the global CSS (style-only HTML takes no space in the layout)."""
+    st.html(f"<style>{CSS_TEMA}</style>")
+
+
+def barra_hud(seccion, datos, alerta):
+    """Breadcrumb + key values + status chip, as the top bar of each section."""
+    kv = "".join(f"<span class='hud-kv'>{k}<b>{v}</b></span>" for k, v in datos)
+    chip = ("<span class='hud-chip is-crit'>SLIP RISK</span>" if alerta
+            else "<span class='hud-chip'>STABLE</span>")
+    st.html(
+        f"<div class='hud-bar'><div class='hud-path'>Kinematic Simulator<i>/</i>RAMPS<i>/</i><b>{seccion}</b></div>"
+        f"<div class='hud-meta'>{kv}{chip}</div></div>"
+    )
+
+
+def etiqueta_panel(titulo, meta=""):
+    """Small header line for a panel (title left, metadata right)."""
+    st.html(f"<div class='hud-label'><b>{titulo.upper()}</b><span>{meta}</span></div>")
+
+
+def subtitulos_izquierda(fig):
+    """Subplot titles as small left-aligned labels (call right after make_subplots)."""
+    fig.update_annotations(font=dict(family=FONT_MONO, size=11, color=INK_2), x=0, xanchor="left")
+
+
+aplicar_tema()
 
 # ==========================================
 # SESSION STATE INITIALIZATION
@@ -520,7 +762,7 @@ def fmt_fs(fs):
 
 
 def estado_txt(desliza):
-    return "🔴 SLIPPING" if desliza else "🟢 STABLE"
+    return "▲ SLIPPING" if desliza else "■ STABLE"
 
 
 def indices_grafica(fase, paso=5):
@@ -567,18 +809,18 @@ def bandas_fase(fig, segs, g_fase, mu, t_total, fila_etiquetas=2):
             fig.add_vrect(x0=sg["t0"], x1=sg["t1"], fillcolor=COL_SLIP, opacity=0.12,
                           line_width=0, layer="below", row="all", col=1)
         elif sg["fase"] not in ("CRUISE_FAST", "CRUISE_SLOW"):
-            fig.add_vrect(x0=sg["t0"], x1=sg["t1"], fillcolor=COL_NEUTRO, opacity=0.07,
+            fig.add_vrect(x0=sg["t0"], x1=sg["t1"], fillcolor=COL_NEUTRO, opacity=0.08,
                           line_width=0, layer="below", row="all", col=1)
         if t_total > 0 and (sg["t1"] - sg["t0"]) / t_total >= 0.07:
             fig.add_annotation(
                 x=(sg["t0"] + sg["t1"]) / 2, y=0.98, xref=xref, yref=yref,
                 text=FASE_CORTO[sg["fase"]], showarrow=False, yanchor="top",
-                font=dict(size=10, color=COL_SLIP if desliza else COL_NEUTRO),
+                font=dict(size=10, color=COL_SLIP if desliza else MUTED),
             )
 
 
-COL_OK_TXT = "#1e7b34"     # darker green for better text contrast
-COL_BORDE_OK = "#9ca3af"
+COL_OK_TXT = INK
+COL_BORDE_OK = "#B9B9B2"
 
 
 def ticks_bonitos(lo, hi, max_ticks=5):
@@ -615,11 +857,11 @@ def distribuir_x(deseadas, lo, hi, sep):
     return out.tolist()
 
 
-def texto_etiqueta(titulo, valor, desliza, detalle, color_titulo="#374151"):
+def texto_etiqueta(titulo, valor, desliza, detalle, color_titulo=INK_2):
     color_val = COL_SLIP if desliza else COL_OK_TXT
-    return (f"<span style='color:{color_titulo}'><b>{titulo}</b></span><br>"
-            f"<span style='font-size:14px;color:{color_val}'><b>{valor}</b></span><br>"
-            f"<span style='font-size:10px;color:#6b7280'>{detalle}</span>")
+    return (f"<span style='font-size:10px;color:{color_titulo}'><b>{titulo}</b></span><br>"
+            f"<span style='font-size:14px;color:{color_val}'>{valor}</span><br>"
+            f"<span style='font-size:10px;color:{MUTED}'>{detalle}</span>")
 
 
 def fila_etiquetas(fig, items, y_fila, t_total, row=2):
@@ -635,10 +877,10 @@ def fila_etiquetas(fig, items, y_fila, t_total, row=2):
             x=it["x"], y=it["y"], xref=xr, yref=yr,
             ax=x_lab, ay=y_fila, axref=xr, ayref=yr,
             text=it["texto"], align="center", showarrow=True,
-            arrowhead=2, arrowsize=0.9, arrowwidth=1.2, arrowcolor=borde, standoff=3,
-            bgcolor="rgba(255,255,255,0.95)", bordercolor=borde,
-            borderwidth=2 if it.get("peor") else 1, borderpad=4,
-            font=dict(size=11, color="#1f2937"),
+            arrowhead=2, arrowsize=0.9, arrowwidth=1, arrowcolor=borde, standoff=3,
+            bgcolor="rgba(250,250,248,0.97)", bordercolor=borde,
+            borderwidth=2 if it.get("peor") else 1, borderpad=5,
+            font=dict(family=FONT_MONO, size=11, color=INK),
         )
 
 
@@ -653,7 +895,7 @@ def componentes_fase_mesa(m, g_cent, sg):
 def entrada_leyenda(fig, nombre, color, dash, **pos):
     """Legend-only entry (sensors, μ): takes no space on the plot and does not affect the axes."""
     fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", name=nombre, hoverinfo="skip",
-                             line=dict(color=color, width=2, dash=dash)), **pos)
+                             line=dict(color=color, width=1.5, dash=dash)), **pos)
 
 
 def leyenda_abajo(fig, height, legend_y=-0.1):
@@ -715,7 +957,8 @@ def series_g_mesa(m):
 # ==========================================
 def sidebar_mesa():
     sb = st.sidebar
-    sb.header("🔄 Parameters — Turntable")
+    sb.header("Parameters")
+    sb.caption("Turntable · PLC setup")
 
     sb.subheader("Kinematics (PLC)")
     sb.number_input("SPEED_AUTO_FAST TABLE (°/s)", step=5.0, key="speed_fast_mesa")
@@ -769,12 +1012,13 @@ def figura_movimiento_mesa(m):
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True, row_heights=[0.46, 0.54], vertical_spacing=0.08,
         subplot_titles=("Turntable angular velocity (°/s)",
-                        f"Acceleration on the part at R_max = {m['r_max']:.0f} mm (G) — green zone = within μ"),
+                        f"Acceleration on the part at R_max = {m['r_max']:.0f} mm (G) — shaded band = within μ"),
     )
+    subtitulos_izquierda(fig)
 
     fig.add_trace(go.Scatter(
         x=t[idx], y=omega[idx], mode="lines", name="Angular velocity ω",
-        line=dict(color=COL_A, width=3),
+        line=dict(color=COL_A, width=2.2),
         customdata=np.column_stack([theta[idx], nombres[idx]]),
         hovertemplate="ω = %{y:.2f} °/s · θ = %{customdata[0]:.2f}° · %{customdata[1]}<extra></extra>",
     ), row=1, col=1)
@@ -785,22 +1029,22 @@ def figura_movimiento_mesa(m):
     ), row=2, col=1)
     fig.add_trace(go.Scatter(
         x=t[idx], y=g_cent[idx], mode="lines", name="Centripetal (ω²·R)",
-        line=dict(color=COL_CENT, width=1.5), hovertemplate="%{y:.3f} G",
+        line=dict(color=COL_CENT, width=1.5, dash="dash"), hovertemplate="%{y:.3f} G",
     ), row=2, col=1)
     fig.add_trace(go.Scatter(
         x=t[idx], y=g_res[idx], mode="lines", name="Resultant",
-        line=dict(color="#444444", width=2.5), hovertemplate="%{y:.3f} G",
+        line=dict(color=COL_RESULT, width=2.2), hovertemplate="%{y:.3f} G",
     ), row=2, col=1)
 
     mu = m["mu"]
     g_top = max(float(np.max(g_res)) if len(g_res) else 0.0, mu, 1e-3)
-    fig.add_hrect(y0=0, y1=mu, fillcolor=COL_OK, opacity=0.08, line_width=0, layer="below", row=2, col=1)
-    fig.add_hline(y=mu, line_width=2, line_dash="dash", line_color=COL_SLIP, row=2, col=1)
+    fig.add_hrect(y0=0, y1=mu, fillcolor=COL_OK, opacity=0.05, line_width=0, layer="below", row=2, col=1)
+    fig.add_hline(y=mu, line_width=1.5, line_dash="dash", line_color=COL_SLIP, row=2, col=1)
     entrada_leyenda(fig, f"Friction limit μ = {mu:.2f}", COL_SLIP, "dash", row=2, col=1)
 
     for fila in (1, 2):
-        fig.add_vline(x=m["t_red"], line_width=2, line_dash="dot", line_color=COL_SENSOR_RED, row=fila, col=1)
-        fig.add_vline(x=m["t_stop"], line_width=2, line_dash="dash", line_color=COL_SENSOR_STOP, row=fila, col=1)
+        fig.add_vline(x=m["t_red"], line_width=1.2, line_dash="dot", line_color=COL_SENSOR_RED, row=fila, col=1)
+        fig.add_vline(x=m["t_stop"], line_width=1.2, line_dash="dash", line_color=COL_SENSOR_STOP, row=fila, col=1)
     entrada_leyenda(fig, f"Slowdown Sensor · {m['t_red']:.2f}s · {m['theta_red']:.2f}°",
                     COL_SENSOR_RED, "dot", row=1, col=1)
     entrada_leyenda(fig, f"Stop Sensor · {m['t_stop']:.2f}s · {m['theta_stop']:.2f}°",
@@ -855,7 +1099,7 @@ def tabla_fases_mesa(m):
             "Tangential G": round(tan, 3),
             "Max centripetal G": round(cent, 3),
             "Max resultant G": round(res, 3),
-            "Status": "🔴 Exceeds μ" if res > m["mu"] else "🟢 OK",
+            "Status": "▲ Exceeds μ" if res > m["mu"] else "■ OK",
         })
     return filas
 
@@ -877,7 +1121,7 @@ def figura_instantes_mesa(m):
                          marker_color=[COL_SLIP if g > mu else COL_OK for g in res],
                          text=[f"{g:.3f} G" for g in res], textposition="outside",
                          hovertemplate="%{y:.3f} G"))
-    fig.add_hline(y=mu, line_width=2, line_dash="dash", line_color=COL_SLIP)
+    fig.add_hline(y=mu, line_width=1.5, line_dash="dash", line_color=COL_SLIP)
     entrada_leyenda(fig, f"Friction limit μ = {mu:.2f}", COL_SLIP, "dash")
     fig.update_layout(
         title="Critical instants: components and resultant vs μ", barmode="group", height=420,
@@ -895,9 +1139,9 @@ def figura_equivalencia(m, conv_a):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=m["t"][idx_m], y=v_mesa[idx_m], mode="lines",
                              name=f"Turntable — linear velocity at R_max ({m['r_max']:.0f} mm)",
-                             line=dict(color=COL_A, width=3), hovertemplate="%{y:.1f} mm/s"))
+                             line=dict(color=COL_A, width=2.2), hovertemplate="%{y:.1f} mm/s"))
     fig.add_trace(go.Scatter(x=conv_a["t"][idx_c], y=conv_a["vel"][idx_c], mode="lines",
-                             name="Conveyor — Profile A", line=dict(color=COL_NEUTRO, width=2, dash="dash"),
+                             name="Conveyor — Profile A", line=dict(color=COL_NEUTRO, width=1.8, dash="dash"),
                              hovertemplate="%{y:.1f} mm/s"))
     fig.update_layout(title="Linear velocity (mm/s) vs time — turntable at R_max vs conveyor",
                       xaxis_title="Time (s)", yaxis_title="mm/s")
@@ -915,32 +1159,34 @@ def pagina_mesa():
     R_sensor = ss.radio_sensor_mesa
     modo_key = modo_conversion_key()
 
-    st.title("🔄 Turntable")
+    barra_hud("Turntable", [("μ", f"{ss.mu_mesa:.2f}"), ("R_max", f"{r_max_mesa:.0f} mm"),
+                            ("Cycle", f"{t_m[-1]:.2f} s")], det_m['se_desliza_resultante'])
+    st.title("Turntable", anchor=False)
     st.caption(
         f"Part centered on the rotation axis. R_max (slip) = Length/2 = {r_max_mesa:.1f} mm. "
-        f"⚠️ Different from the Sensor Rail Radius ({R_sensor:.2f} mm), which is only used "
+        f"Different from the Sensor Rail Radius ({R_sensor:.2f} mm), which is only used "
         f"to convert sensor positions between degrees and mm."
     )
 
     # ---- Configuration alerts ----
     if det_m['insufficient_angle']:
         st.warning(
-            f"⚠️ **Inconsistent configuration:** `RAMP_DECEL TABLE` needs "
+            f"**Inconsistent configuration:** `RAMP_DECEL TABLE` needs "
             f"**{det_m['angle_needed_decel']:.1f}°** to go from SPEED_AUTO_FAST down to SPEED_AUTO_SLOW, "
             f"but the `Slowdown Sensor Distance TABLE` ({ss.sensor_distance_mm_mesa:.1f} mm ≈ "
             f"{m['sensor_angle']:.1f}°) is not enough."
         )
     if det_m['mechanically_capped']:
         st.info(
-            f"ℹ️ Configured `RAMP_STOP TABLE` ({ss.ramp_stop_mesa:.1f} °/s²) exceeds the "
+            f"Configured `RAMP_STOP TABLE` ({ss.ramp_stop_mesa:.1f} °/s²) exceeds the "
             f"achievable mechanical maximum ({det_m['alpha_mechanical_max']:.1f} °/s², limited by the "
             f"{T_MIN_MECANICO_MS:.0f} ms floor). The mechanical limit was applied: actual angular deceleration = "
             f"**{det_m['alpha_stop']:.1f} °/s²** (≈{det_m['ramp_stop_real_ms']:.1f} ms)."
         )
 
     # ---- Summary ----
-    with st.container(border=True):
-        st.markdown("**Cycle summary**")
+    with st.container(border=True, key="resumen_mesa"):
+        etiqueta_panel("Cycle summary", "SIM · Δt 1 ms")
         v1, v2, v3, v4, v5 = st.columns(5)
         v1.metric("Status (combined worst case)", estado_txt(det_m['se_desliza_resultante']),
                   help="Most complete criterion: tangential + centripetal at the critical instants.")
@@ -951,20 +1197,20 @@ def pagina_mesa():
         v5.metric("Angular overrun", f"{m['ang_overrun']:.3f}°")
 
     tab_mov, tab_slip, tab_sens, tab_eq, tab_fund = st.tabs([
-        "📈 Motion", "⚠️ Slip", "📍 Sensors & adjustment", "🔁 Conveyor equivalence",
-        "📚 Fundamentals",
+        "Motion", "Slip", "Sensors & adjustment", "Conveyor equivalence",
+        "Fundamentals",
     ])
 
     # ------------------------------------------
     with tab_mov:
-        st.plotly_chart(figura_movimiento_mesa(m))
+        st.plotly_chart(figura_movimiento_mesa(m), theme=None)
         st.caption(
             "Labels: maximum resultant acceleration of each phase with its tangential (ramp) and "
-            "centripetal (ω²·R) components — green = within μ, red = exceeds μ, thick border = most critical phase. "
+            "centripetal (ω²·R) components — black = within μ, orange = exceeds μ, thick border = most critical phase. "
             "Bands: PLC phases. Hover over the velocity curve to see the angle θ at each instant."
         )
 
-        st.subheader("🎯 Positioning & cycle time")
+        st.subheader("Positioning & cycle time")
         mp1, mp2, mp3, mp4, mp5 = st.columns(5)
         mp1.metric("Angular Overrun", f"{m['ang_overrun']:.3f}°")
         mp2.metric("Overrun Time", f"{m['overrun_time']*1000:.0f} ms")
@@ -973,12 +1219,12 @@ def pagina_mesa():
         mp4.metric("Final Part Position", f"{(theta_m[-1] + det_m['deslizamiento_deg_stop']):.3f}°")
         mp5.metric("Total Cycle Time", f"{t_m[-1]:.2f} s")
 
-        st.subheader("🧭 Cycle phases")
+        st.subheader("Cycle phases")
         st.dataframe(tabla_fases_mesa(m), hide_index=True)
 
     # ------------------------------------------
     with tab_slip:
-        st.plotly_chart(figura_instantes_mesa(m))
+        st.plotly_chart(figura_instantes_mesa(m), theme=None)
 
         st.subheader("Resultant acceleration at the critical instants (tangential + centripetal)")
         st.caption(
@@ -990,23 +1236,23 @@ def pagina_mesa():
         for col, (label, g_val) in zip(res_cols, det_m['resultantes'].items()):
             is_worst = (label == det_m['peor_caso_label'])
             col.metric(label.split(" (")[0], f"{g_val:.3f} G",
-                       delta="⚠️ WORST CASE" if is_worst else None, delta_color="off", help=label)
+                       delta="▲ WORST CASE" if is_worst else None, delta_color="off", help=label)
 
         rc1, rc2 = st.columns(2)
-        rc1.metric("🔺 Combined Worst Case (Max Resultant)", f"{det_m['g_res_max']:.3f} G",
+        rc1.metric("Combined Worst Case (Max Resultant)", f"{det_m['g_res_max']:.3f} G",
                    help=f"Occurs at: {det_m['peor_caso_label']}")
-        rc2.metric("🛡️ Resultant Safety Factor (μ / g_res_max)", fmt_fs(det_m['factor_seguridad_resultante']))
+        rc2.metric("Resultant Safety Factor (μ / g_res_max)", fmt_fs(det_m['factor_seguridad_resultante']))
 
         if det_m['se_desliza_resultante'] and not m['desliza']:
             st.warning(
-                f"⚠️ **Difference detected:** the current criterion (tangential only) says **STABLE**, but the "
+                f"**Difference detected:** the current criterion (tangential only) says **STABLE**, but the "
                 f"resultant criterion shows that at **{det_m['peor_caso_label']}** the total force "
                 f"({det_m['g_res_max']:.3f} G) **exceeds** μ ({ss.mu_mesa:.2f} G)."
             )
         elif det_m['se_desliza_resultante']:
-            st.error(f"🔴 The resultant criterion confirms slip — worst case at **{det_m['peor_caso_label']}**.")
+            st.error(f"The resultant criterion confirms slip — worst case at **{det_m['peor_caso_label']}**.")
         else:
-            st.success("🟢 Even considering the combined worst case, the part stays stable throughout the cycle.")
+            st.success("Even considering the combined worst case, the part stays stable throughout the cycle.")
 
         st.divider()
         st.subheader("Final stop (tangential component)")
@@ -1016,30 +1262,30 @@ def pagina_mesa():
         m3.metric("Stability When Stopping", estado_txt(m['desliza']))
         m4.metric("Relative Slip",
                   f"{det_m['deslizamiento_deg_stop']:.4f}° ({m['d_desliza_mm']:.3f} mm)" if m['desliza'] else "0.0000°")
-        st.metric("🛡️ Safety Factor When Stopping (μ / g_tan)", fmt_fs(det_m['factor_seguridad_stop']))
+        st.metric("Safety Factor When Stopping (μ / g_tan)", fmt_fs(det_m['factor_seguridad_stop']))
 
         st.divider()
-        st.subheader("🌀 Centripetal risk while cruising (constant speed)")
+        st.subheader("Centripetal risk while cruising (constant speed)")
         st.caption(
             "This risk exists ANY time the table rotates at constant speed, even without braking. "
             "It has no equivalent on the linear conveyor."
         )
         mc1, mc2, mc3, mc4 = st.columns(4)
         mc1.metric("Centripetal G @ Fast Speed", f"{det_m['g_cent_fast']:.3f} G")
-        mc2.metric("Stability @ Fast", "🔴 RISK" if det_m['se_desliza_cruise_fast'] else "🟢 OK")
+        mc2.metric("Stability @ Fast", "▲ RISK" if det_m['se_desliza_cruise_fast'] else "■ OK")
         mc3.metric("Centripetal G @ Slow Speed", f"{det_m['g_cent_slow']:.3f} G")
-        mc4.metric("Stability @ Slow", "🔴 RISK" if det_m['se_desliza_cruise_slow'] else "🟢 OK")
+        mc4.metric("Stability @ Slow", "▲ RISK" if det_m['se_desliza_cruise_slow'] else "■ OK")
 
         if det_m['se_desliza_cruise_fast'] or det_m['se_desliza_cruise_slow']:
             st.error(
-                "🔴 **Slip risk while cruising detected.** The centripetal force at this angular speed "
+                "**Slip risk while cruising detected.** The centripetal force at this angular speed "
                 "and radius exceeds the available friction."
             )
         else:
-            st.success("🟢 The centripetal force at both cruise speeds is within the friction limit.")
+            st.success("The centripetal force at both cruise speeds is within the friction limit.")
 
-        with st.expander("🔍 View calculation breakdown — Turntable"):
-            st.markdown("### 🧮 Calculation Report (Simulated Values)")
+        with st.expander("View calculation breakdown — Turntable"):
+            st.markdown("### Calculation Report (Simulated Values)")
 
             st.markdown("**Step 0: Sensor Distance → Angle**")
             st.latex(L(
@@ -1075,13 +1321,13 @@ def pagina_mesa():
 
             st.markdown("**Step 4: Slip Criterion When Stopping (tangential only)**")
             if m['desliza']:
-                st.error(f"🔴 **SLIPS WHEN STOPPING:** g_conv ({m['g_conv']:.3f} G) > μ ({ss.mu_mesa:.2f} G)")
+                st.error(f"**SLIPS WHEN STOPPING:** g_conv ({m['g_conv']:.3f} G) > μ ({ss.mu_mesa:.2f} G)")
             else:
-                st.success(f"🟢 **STABLE WHEN STOPPING:** g_conv ({m['g_conv']:.3f} G) ≤ μ ({ss.mu_mesa:.2f} G)")
+                st.success(f"**STABLE WHEN STOPPING:** g_conv ({m['g_conv']:.3f} G) ≤ μ ({ss.mu_mesa:.2f} G)")
 
     # ------------------------------------------
     with tab_sens:
-        st.subheader("📍 Distance between sensors (mm) — field setup")
+        st.subheader("Distance between sensors (mm) — field setup")
         st.caption(
             "Both sensors (Slowdown and Stop) are located near the end of the total angular travel, "
             "mounted on a fixed rail. Enter their physical separation as measured with a tape measure "
@@ -1102,7 +1348,7 @@ def pagina_mesa():
         )
 
         st.divider()
-        st.subheader("📏 Angular overrun and its conversion to the sensor rail (mm)")
+        st.subheader("Angular overrun and its conversion to the sensor rail (mm)")
         st.caption(
             "Converts the angular overrun (caused by RAMP_STOP) into the equivalent linear distance on the "
             "sensor rail, so maintenance can reposition the stop sensor with a tape measure."
@@ -1113,7 +1359,7 @@ def pagina_mesa():
         ov2.metric(f"Overrun on the Rail (R={R_sensor:.2f}mm)", f"{overrun_mm_riel:.3f} mm")
         ov3.metric("Overrun Time", f"{m['overrun_time']*1000:.0f} ms")
 
-        st.markdown("**🔧 Compensation recommendation (to keep the original stop position):**")
+        st.markdown("**Compensation recommendation (to keep the original stop position):**")
         trigger_angle_original = ss.angle_total_mesa
         trigger_angle_compensado = trigger_angle_original - m['ang_overrun']
         trigger_mm_original = angle_to_mm(trigger_angle_original, R_sensor, modo_key)
@@ -1125,31 +1371,31 @@ def pagina_mesa():
                      delta=f"{(trigger_mm_compensado - trigger_mm_original):.3f} mm (move back)",
                      delta_color="inverse")
         st.info(
-            f"💡 For the table to stop at exactly the same point it would reach with "
+            f"For the table to stop at exactly the same point it would reach with "
             f"`RAMP_STOP TABLE = 0`, physically move the **stop sensor** "
             f"**{abs(trigger_mm_compensado - trigger_mm_original):.3f} mm back** along the rail."
         )
 
     # ------------------------------------------
     with tab_eq:
-        st.subheader("📐 Linear equivalence at the critical point (R_max)")
+        st.subheader("Linear equivalence at the critical point (R_max)")
         st.caption(
             f"Converts each angular table parameter into its linear equivalent (mm/s, mm/s²) at the farthest "
             f"point of the part (R_max = {r_max_mesa:.1f} mm), to compare directly against the same "
             f"units on the linear conveyor (Profile A, set up in the Conveyor section)."
         )
         conv_a = simular_conveyor("a")
-        st.plotly_chart(figura_equivalencia(m, conv_a))
+        st.plotly_chart(figura_equivalencia(m, conv_a), theme=None)
 
         eqL1, eqL2 = st.columns(2)
         with eqL1:
-            st.markdown("**🔄 Turntable (converted to R_max)**")
+            st.markdown("**Turntable (converted to R_max)**")
             st.metric("SPEED_AUTO_FAST TABLE → mm/s", f"{det_m['v_fast_lineal']:.1f} mm/s")
             st.metric("SPEED_AUTO_SLOW TABLE → mm/s", f"{det_m['v_slow_lineal']:.1f} mm/s")
             st.metric("RAMP_ACCEL TABLE → mm/s²", f"{det_m['a_accel_lineal']:.1f} mm/s²")
             st.metric("RAMP_DECEL TABLE → mm/s²", f"{det_m['a_decel_lineal']:.1f} mm/s²")
         with eqL2:
-            st.markdown("**➡️ Linear Conveyor (Profile A, direct reference)**")
+            st.markdown("**Linear Conveyor (Profile A, direct reference)**")
             st.metric("SPEED_AUTO_FAST A", f"{ss.speed_fast_a:.1f} mm/s",
                       delta=f"{det_m['v_fast_lineal'] - ss.speed_fast_a:+.1f} mm/s", delta_color="off")
             st.metric("SPEED_AUTO_SLOW A", f"{ss.speed_slow_a:.1f} mm/s",
@@ -1169,12 +1415,13 @@ def pagina_mesa():
 # ==========================================
 def sidebar_conveyor():
     sb = st.sidebar
-    sb.header("➡️ Parameters — Conveyor")
+    sb.header("Parameters")
+    sb.caption("Linear conveyor · PLC setup")
 
     sb.subheader("Geometry")
     sb.number_input("Total Conveyor Length (mm)", step=100.0, key="conveyor_length")
 
-    sb.subheader("🔵 Profile A (main)")
+    sb.subheader("Profile A (main)")
     sb.number_input("SPEED_AUTO_FAST A (mm/s)", step=10.0, key="speed_fast_a")
     sb.number_input("SPEED_AUTO_SLOW A (mm/s)", step=10.0, key="speed_slow_a")
     sb.number_input("RAMP_ACCEL A (mm/s²)", step=50.0, key="accel_a")
@@ -1204,7 +1451,7 @@ def sidebar_conveyor():
     ss._comparar_prev = ss.comparar
 
     if ss.comparar:
-        sb.subheader("🟣 Profile B (comparison)")
+        sb.subheader("Profile B (comparison)")
         sb.number_input("SPEED_AUTO_FAST B (mm/s)", step=10.0, key="speed_fast_b")
         sb.number_input("SPEED_AUTO_SLOW B (mm/s)", step=10.0, key="speed_slow_b")
         sb.number_input("RAMP_ACCEL B (mm/s²)", step=50.0, key="accel_b")
@@ -1221,8 +1468,9 @@ def figura_movimiento_conveyor(a, b=None):
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True, row_heights=[0.46, 0.54], vertical_spacing=0.08,
         subplot_titles=("Conveyor velocity (mm/s)",
-                        "Acceleration on the part (G) — green zone = within μ"),
+                        "Acceleration on the part (G) — shaded band = within μ"),
     )
+    subtitulos_izquierda(fig)
     perfiles = [("A", a, COL_A, "solid")] + ([("B", b, COL_B, "dashdot")] if b is not None else [])
 
     g_abs_max = 0.0
@@ -1234,23 +1482,23 @@ def figura_movimiento_conveyor(a, b=None):
         g_abs_max = max(g_abs_max, float(np.max(np.abs(g))) if len(g) else 0.0)
         fig.add_trace(go.Scatter(
             x=s["t"][idx], y=s["vel"][idx], mode="lines", name=f"Velocity {nombre}",
-            line=dict(color=color, width=3, dash=dash),
+            line=dict(color=color, width=2.2, dash=dash),
             customdata=np.column_stack([s["pos"][idx], nombres[idx]]),
             hovertemplate=f"{nombre}: " + "%{y:.1f} mm/s · x = %{customdata[0]:.1f} mm · %{customdata[1]}<extra></extra>",
         ), row=1, col=1)
         fig.add_trace(go.Scatter(
             x=s["t"][idx], y=g[idx], mode="lines", name=f"Acceleration {nombre}",
-            line=dict(color=color, width=2, dash=dash, shape="vh"),
+            line=dict(color=color, width=1.6, dash=dash, shape="vh"),
             hovertemplate=f"{nombre}: " + "%{y:.3f} G<extra></extra>",
         ), row=2, col=1)
 
     # Sensors
     for nombre, s, color, _ in perfiles:
-        c_red = COL_SENSOR_RED if nombre == "A" else COL_B
-        c_stop = COL_SENSOR_STOP if nombre == "A" else "#6f4a94"
+        c_red = COL_SENSOR_RED if nombre == "A" else COL_B_RED
+        c_stop = COL_SENSOR_STOP if nombre == "A" else COL_B_STOP
         for fila in (1, 2):
-            fig.add_vline(x=s["t_red"], line_width=2, line_dash="dot", line_color=c_red, row=fila, col=1)
-            fig.add_vline(x=s["t_stop"], line_width=2, line_dash="dash", line_color=c_stop, row=fila, col=1)
+            fig.add_vline(x=s["t_red"], line_width=1.2, line_dash="dot", line_color=c_red, row=fila, col=1)
+            fig.add_vline(x=s["t_stop"], line_width=1.2, line_dash="dash", line_color=c_stop, row=fila, col=1)
         entrada_leyenda(fig, f"Slowdown Sensor {nombre} · {s['t_red']:.2f}s · {s['det']['pos_sensor_red']:.0f} mm",
                         c_red, "dot", row=1, col=1)
         entrada_leyenda(fig, f"Stop Sensor {nombre} · {s['t_stop']:.2f}s · {s['det']['pos_stop']:.0f} mm",
@@ -1258,16 +1506,16 @@ def figura_movimiento_conveyor(a, b=None):
 
     # Friction limit
     mu_a = a["mu"]
-    fig.add_hrect(y0=-mu_a, y1=mu_a, fillcolor=COL_OK, opacity=0.08, line_width=0, layer="below", row=2, col=1)
+    fig.add_hrect(y0=-mu_a, y1=mu_a, fillcolor=COL_OK, opacity=0.05, line_width=0, layer="below", row=2, col=1)
     for signo in (1, -1):
-        fig.add_hline(y=signo * mu_a, line_width=2, line_dash="dash", line_color=COL_SLIP, row=2, col=1)
+        fig.add_hline(y=signo * mu_a, line_width=1.5, line_dash="dash", line_color=COL_SLIP, row=2, col=1)
     entrada_leyenda(fig, f"Friction limit ±μ{' A' if b is not None else ''} = {mu_a:.2f}",
                     COL_SLIP, "dash", row=2, col=1)
     mu_max = mu_a
     if b is not None and abs(b["mu"] - mu_a) > 1e-9:
         mu_max = max(mu_max, b["mu"])
         for signo in (1, -1):
-            fig.add_hline(y=signo * b["mu"], line_width=2, line_dash="dot", line_color=COL_B, row=2, col=1)
+            fig.add_hline(y=signo * b["mu"], line_width=1.5, line_dash="dot", line_color=COL_B, row=2, col=1)
         entrada_leyenda(fig, f"Friction limit ±μ B = {b['mu']:.2f}", COL_B, "dot", row=2, col=1)
 
     # Profile A phases
@@ -1294,7 +1542,7 @@ def figura_movimiento_conveyor(a, b=None):
                 "x": (sg["t0"] + sg["t1"]) / 2, "y": g, "desliza": desliza, "peor": sg is peor,
                 "texto": texto_etiqueta(titulo, f"{g:+.3f} G".replace("-", "−"), desliza,
                                         f"{abs(a_val):.0f} mm/s² · {dur_txt}",
-                                        color_titulo=color if b is not None else "#374151"),
+                                        color_titulo=color if b is not None else INK_2),
             })
     fila_etiquetas(fig, items, y_fila=g_top * 1.6, t_total=t_total)
 
@@ -1323,7 +1571,7 @@ def tabla_fases_conveyor(s, perfil=None):
             "Travel (mm)": round(float(s["pos"][b] - s["pos"][a]), 2),
             "v start → end (mm/s)": f"{s['vel'][a]:.0f} → {s['vel'][b]:.0f}",
             "Acceleration (G)": round(g, 3),
-            "Status": "🔴 Exceeds μ" if g > s["mu"] else "🟢 OK",
+            "Status": "▲ Exceeds μ" if g > s["mu"] else "■ OK",
         })
         filas.append(fila)
     return filas
@@ -1350,12 +1598,12 @@ def figura_fases_conveyor(a, b=None):
         g_all += gb
         fig.add_trace(go.Bar(x=etiquetas, y=gb, name="Profile B", marker_color=COL_B,
                              text=[f"{g:.3f} G" for g in gb], textposition="outside", hovertemplate="%{y:.3f} G"))
-    fig.add_hline(y=a["mu"], line_width=2, line_dash="dash", line_color=COL_SLIP)
+    fig.add_hline(y=a["mu"], line_width=1.5, line_dash="dash", line_color=COL_SLIP)
     entrada_leyenda(fig, f"Friction limit μ{' A' if b is not None else ''} = {a['mu']:.2f}", COL_SLIP, "dash")
     mu_max = a["mu"]
     if b is not None and abs(b["mu"] - a["mu"]) > 1e-9:
         mu_max = max(mu_max, b["mu"])
-        fig.add_hline(y=b["mu"], line_width=2, line_dash="dot", line_color=COL_B)
+        fig.add_hline(y=b["mu"], line_width=1.5, line_dash="dot", line_color=COL_B)
         entrada_leyenda(fig, f"Friction limit μ B = {b['mu']:.2f}", COL_B, "dot")
     fig.update_layout(
         title="Acceleration per state transition vs μ", barmode="group", height=400,
@@ -1375,32 +1623,37 @@ def pagina_conveyor():
     det_a = A["det"]
     det_b = B["det"] if comparar else None
 
-    st.title("➡️ Linear conveyor")
+    hud = [("μ", f"{ss.mu_a:.2f}"), ("L", f"{ss.conveyor_length:.0f} mm"), ("Cycle", f"{A['t'][-1]:.2f} s")]
+    if comparar:
+        hud = [("μ A", f"{ss.mu_a:.2f}"), ("μ B", f"{ss.mu_b:.2f}"), ("L", f"{ss.conveyor_length:.0f} mm")]
+    barra_hud("Conveyor", hud,
+              det_a['se_desliza_alguna_fase'] or bool(comparar and det_b['se_desliza_alguna_fase']))
+    st.title("Linear conveyor", anchor=False)
     st.caption("Real-time analysis of the velocity profile, positioning and inertial slip of the part.")
 
     # ---- Configuration alerts ----
     if det_a['insufficient_distance']:
         st.warning(
-            f"⚠️ **Profile A — Inconsistent configuration:** the `RAMP_DECEL A` ramp needs "
+            f"**Profile A — Inconsistent configuration:** the `RAMP_DECEL A` ramp needs "
             f"**{det_a['dist_needed_decel']:.1f} mm** to go from SPEED_AUTO_FAST down to SPEED_AUTO_SLOW, "
             f"but the `Slowdown Sensor Distance A` is only **{ss.sensor_distance_a:.1f} mm**."
         )
     if comparar and det_b['insufficient_distance']:
         st.warning(
-            f"⚠️ **Profile B — Inconsistent configuration:** the `RAMP_DECEL B` ramp needs "
+            f"**Profile B — Inconsistent configuration:** the `RAMP_DECEL B` ramp needs "
             f"**{det_b['dist_needed_decel']:.1f} mm** to go from SPEED_AUTO_FAST down to SPEED_AUTO_SLOW, "
             f"but the `Slowdown Sensor Distance B` is only **{ss.sensor_distance_b:.1f} mm**."
         )
     if det_a['mechanically_capped']:
         st.info(
-            f"ℹ️ **Profile A:** configured `RAMP_STOP A` ({ss.ramp_stop_a:.1f} mm/s²) exceeds the "
+            f"**Profile A:** configured `RAMP_STOP A` ({ss.ramp_stop_a:.1f} mm/s²) exceeds the "
             f"achievable mechanical maximum ({det_a['a_mechanical_max']:.1f} mm/s², limited by the "
             f"{T_MIN_MECANICO_MS:.0f} ms floor). The mechanical limit was applied: actual deceleration = "
             f"**{det_a['a_stop_conveyor']:.1f} mm/s²** (≈{det_a['ramp_stop_real_ms']:.1f} ms)."
         )
     if comparar and det_b['mechanically_capped']:
         st.info(
-            f"ℹ️ **Profile B:** configured `RAMP_STOP B` ({ss.ramp_stop_b:.1f} mm/s²) exceeds the "
+            f"**Profile B:** configured `RAMP_STOP B` ({ss.ramp_stop_b:.1f} mm/s²) exceeds the "
             f"achievable mechanical maximum ({det_b['a_mechanical_max']:.1f} mm/s²). The mechanical limit was applied: "
             f"actual deceleration = **{det_b['a_stop_conveyor']:.1f} mm/s²** (≈{det_b['ramp_stop_real_ms']:.1f} ms)."
         )
@@ -1424,33 +1677,33 @@ def pagina_conveyor():
             c5.metric(f"Final part position {etiqueta}", f"{pos_final:.2f} mm",
                       delta=f"{pos_final - ref_pos:.2f} mm vs A", delta_color="off")
 
-    with st.container(border=True):
-        st.markdown("**Cycle summary**")
+    with st.container(border=True, key="resumen_conveyor"):
+        etiqueta_panel("Cycle summary", "SIM · Δt 1 ms" + (" · A vs B" if comparar else ""))
         fila_resumen(A, "A")
         if comparar:
             fila_resumen(B, "B", ref=A)
 
     tab_mov, tab_slip, tab_ab, tab_fund = st.tabs([
-        "📈 Motion", "⚠️ Slip", "⚖️ Profile A vs B", "📚 Fundamentals",
+        "Motion", "Slip", "Profile A vs B", "Fundamentals",
     ])
 
     # ------------------------------------------
     with tab_mov:
-        st.plotly_chart(figura_movimiento_conveyor(A, B))
+        st.plotly_chart(figura_movimiento_conveyor(A, B), theme=None)
         st.caption(
             "Labels: acceleration of each ramp in G, with the effective acceleration (mm/s²) and its duration — "
-            "green = within μ, red = exceeds μ, thick border = most critical phase. While cruising the acceleration "
+            "black = within μ, orange = exceeds μ, thick border = most critical phase. While cruising the acceleration "
             "is 0 G. Bands: Profile A PLC phases. Hover over the velocity curve to see the position x."
         )
 
-        st.subheader("🎯 Positioning & cycle time (Profile A)")
+        st.subheader("Positioning & cycle time (Profile A)")
         col5, col6, col7, col8 = st.columns(4)
         col5.metric("Conveyor Overrun", f"{A['overrun']:.2f} mm")
         col6.metric("Overrun Time", f"{A['overrun_time']*1000:.0f} ms")
         col7.metric("Final Part Position", f"{(A['pos'][-1] + A['d_desliza']):.2f} mm")
         col8.metric("Total Motion Time", f"{A['t'][-1]:.2f} s")
 
-        st.subheader("🧭 Cycle phases")
+        st.subheader("Cycle phases")
         filas = tabla_fases_conveyor(A, "A" if comparar else None)
         if comparar:
             filas += tabla_fases_conveyor(B, "B")
@@ -1458,7 +1711,7 @@ def pagina_conveyor():
 
     # ------------------------------------------
     with tab_slip:
-        st.plotly_chart(figura_fases_conveyor(A, B))
+        st.plotly_chart(figura_fases_conveyor(A, B), theme=None)
 
         st.subheader("Acceleration in G per state transition (Profile A)")
         st.caption(
@@ -1468,28 +1721,28 @@ def pagina_conveyor():
         )
         fa1, fa2, fa3 = st.columns(3)
         fa1.metric("ACCEL_FAST (start-up)", f"{det_a['g_accel']:.3f} G",
-                   delta="🔴 SLIP" if det_a['se_desliza_accel'] else "🟢 OK", delta_color="off")
+                   delta="▲ SLIP" if det_a['se_desliza_accel'] else "■ OK", delta_color="off")
         fa2.metric("DECEL_TO_SLOW (braking to creep)", f"{det_a['g_decel']:.3f} G",
-                   delta="🔴 SLIP" if det_a['se_desliza_decel'] else "🟢 OK", delta_color="off")
+                   delta="▲ SLIP" if det_a['se_desliza_decel'] else "■ OK", delta_color="off")
         fa3.metric("DECEL_TO_STOP (final stop)", f"{A['g_conv']:.3f} G",
-                   delta="🔴 SLIP" if det_a['se_desliza_stop_fase'] else "🟢 OK", delta_color="off")
+                   delta="▲ SLIP" if det_a['se_desliza_stop_fase'] else "■ OK", delta_color="off")
 
         fb1, fb2 = st.columns(2)
-        fb1.metric("🔺 Most Critical Phase", det_a['peor_fase_label'].split(" (")[0], help=det_a['peor_fase_label'])
-        fb2.metric("🛡️ Safety Factor of the Most Critical Phase", fmt_fs(det_a['factor_seguridad_fase']))
+        fb1.metric("Most Critical Phase", det_a['peor_fase_label'].split(" (")[0], help=det_a['peor_fase_label'])
+        fb2.metric("Safety Factor of the Most Critical Phase", fmt_fs(det_a['factor_seguridad_fase']))
 
         if det_a['se_desliza_alguna_fase'] and not det_a['se_desliza_stop_fase']:
             st.warning(
-                f"⚠️ **Difference detected:** the final stop is STABLE, but **{det_a['peor_fase_label']}** "
+                f"**Difference detected:** the final stop is STABLE, but **{det_a['peor_fase_label']}** "
                 f"reaches {det_a['g_max_fase']:.3f} G, which **exceeds** μ ({ss.mu_a:.2f} G)."
             )
         elif det_a['se_desliza_alguna_fase']:
-            st.error(f"🔴 At least one phase exceeds μ — the most critical is **{det_a['peor_fase_label']}**.")
+            st.error(f"At least one phase exceeds μ — the most critical is **{det_a['peor_fase_label']}**.")
         else:
-            st.success("🟢 All three speed transitions are within the friction limit.")
+            st.success("All three speed transitions are within the friction limit.")
 
         st.divider()
-        st.subheader("📊 Inertia & part slip at the final stop (Profile A)")
+        st.subheader("Inertia & part slip at the final stop (Profile A)")
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Conveyor Deceleration", f"{A['g_conv']:.3f} G")
         col2.metric("Friction Limit (μ)", f"{ss.mu_a:.2f} G")
@@ -1498,13 +1751,13 @@ def pagina_conveyor():
                     f"{A['d_desliza']:.3f} mm ({A['d_desliza']*1000:.0f} µm)" if A['desliza'] else "0.000 mm")
 
         col_s1, col_s2 = st.columns(2)
-        col_s1.metric("🛡️ Safety Factor (μ / g_conv)", fmt_fs(det_a['factor_seguridad']))
-        col_s2.metric("🎯 Minimum μ required to NOT slip", f"{det_a['mu_minimo_requerido']:.3f}")
+        col_s1.metric("Safety Factor (μ / g_conv)", fmt_fs(det_a['factor_seguridad']))
+        col_s2.metric("Minimum μ required to NOT slip", f"{det_a['mu_minimo_requerido']:.3f}")
 
-        titulo = ("🔍 View step-by-step calculation breakdown (Profile A)" if A['desliza']
-                  else "ℹ️ View stability & deceleration math (Profile A)")
+        titulo = ("View step-by-step calculation breakdown (Profile A)" if A['desliza']
+                  else "View stability & deceleration math (Profile A)")
         with st.expander(titulo):
-            st.markdown("### 🧮 Live Calculation Breakdown (Simulated Values)")
+            st.markdown("### Live Calculation Breakdown (Simulated Values)")
 
             st.markdown("**Step 1: Mechanical Maximum Deceleration (Floor Limit)**")
             st.latex(L(
@@ -1532,7 +1785,7 @@ def pagina_conveyor():
 
             st.markdown("**Step 4: Slip Decision Criterion**")
             if A['desliza']:
-                st.error(f"🔴 **SLIP DETECTED:** g_conv ({A['g_conv']:.3f} G) > μ ({ss.mu_a:.2f} G).")
+                st.error(f"**SLIP DETECTED:** g_conv ({A['g_conv']:.3f} G) > μ ({ss.mu_a:.2f} G).")
                 st.markdown("**Step 5: Relative Slip Distance (Δd)**")
                 st.latex(L(
                     f"d_{{~text{{piece}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{max~_piece}}}}}} = "
@@ -1547,7 +1800,7 @@ def pagina_conveyor():
                     f"~mathbf{{{A['d_desliza']:.3f}~,~text{{mm}}}}"
                 ))
             else:
-                st.success(f"🟢 **STABLE LOAD:** g_conv ({A['g_conv']:.3f} G) ≤ μ ({ss.mu_a:.2f} G).")
+                st.success(f"**STABLE LOAD:** g_conv ({A['g_conv']:.3f} G) ≤ μ ({ss.mu_a:.2f} G).")
 
     # ------------------------------------------
     with tab_ab:
@@ -1556,7 +1809,7 @@ def pagina_conveyor():
                     "Profile B starts as a copy of Profile A.")
         else:
             st.subheader("Acceleration per state transition — Profile B")
-            st.caption("Deltas are B − A (red = B demands more friction than A).")
+            st.caption("Deltas are B − A (orange = B demands more friction than A).")
             fa1b, fa2b, fa3b = st.columns(3)
             fa1b.metric("ACCEL_FAST B", f"{det_b['g_accel']:.3f} G",
                         delta=f"{(det_b['g_accel'] - det_a['g_accel']):.3f} G", delta_color="inverse")
@@ -1567,7 +1820,7 @@ def pagina_conveyor():
             st.caption(f"Most critical phase in B: **{det_b['peor_fase_label']}** ({det_b['g_max_fase']:.3f} G)")
 
             st.divider()
-            st.subheader("⚖️ Profile A vs Profile B — final stop & positioning")
+            st.subheader("Profile A vs Profile B — final stop & positioning")
             c_b1, c_b2, c_b3, c_b4 = st.columns(4)
             c_b1.metric("Deceleration Profile B", f"{B['g_conv']:.3f} G",
                         delta=f"{(B['g_conv'] - A['g_conv']):.3f} G", delta_color="inverse")
@@ -1609,7 +1862,7 @@ def fundamentos_comunes(unidad_a, simbolo):
 
 
 def fundamentos_conveyor():
-    st.header("📐 Physics Engine & Kinematic Formulas — Conveyor")
+    st.header("Physics Engine & Kinematic Formulas — Conveyor")
     st.markdown(
         "Analytical models used to simulate conveyor dynamics, deceleration forces, friction boundaries "
         "and the inertial displacement of the transported part."
@@ -1656,7 +1909,7 @@ def fundamentos_conveyor():
 
 
 def fundamentos_mesa():
-    st.header("📐 Physics Engine & Kinematic Formulas — Turntable")
+    st.header("Physics Engine & Kinematic Formulas — Turntable")
     st.markdown(
         "Analytical models used to simulate the table rotation, the tangential and centripetal components "
         "felt by the part, and the conversion of angular positions to the sensor rail."
