@@ -52,29 +52,33 @@ def mm_to_angle(mm, radius, mode="Arc (R·θ)"):
 T_MIN_MECANICO_MS = 20.0
 T_MIN_MECANICO_S = T_MIN_MECANICO_MS / 1000.0
 
-# Palette (technical console look): ink + grays, orange only for what needs attention
-FONT_MONO = "'JetBrains Mono', 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-INK = "#141414"
-INK_2 = "#3A3A37"
-MUTED = "#76766F"
-LINE = "#D4D4CF"
-GRID = "#E6E6E1"
-PANEL = "#FAFAF8"
-ACCENT = "#FF4F1A"
+# Palette — industrial (RAL-inspired): anthracite ink, gentian blue, signal green/red for state only
+FONT_UI = "Archivo, 'Helvetica Neue', Arial, sans-serif"
+INK = "#1E2629"          # anthracite — text and the motion profile
+INK_2 = "#4F5B61"        # secondary text
+MUTED = "#7C878D"        # axis labels, captions
+LINE = "#DCE1E4"         # hairlines
+GRID = "#E8ECEE"         # chart gridlines
+PANEL = "#FFFFFF"        # work surfaces
+ACCENT = "#13568F"       # gentian blue — structure, Profile A
+VIOLET = "#6B5BD6"       # Profile B / centripetal component
+OK = "#237F52"           # signal green — within μ
+BAD = "#B3261E"          # signal red — exceeds μ
 
 # Colors (consistent across the app)
-COL_A = INK
-COL_B = "#9A9A93"
-COL_B_STOP = "#5A5A55"
-COL_B_RED = "#B9B9B2"
-COL_SENSOR_RED = "#5A5A55"
+COL_A = ACCENT
+COL_B = VIOLET
+COL_B_STOP = "#4B3EA8"
+COL_B_RED = "#A69DE8"
+COL_SENSOR_RED = MUTED
 COL_SENSOR_STOP = INK
-COL_OK = INK
-COL_SLIP = ACCENT
-COL_TAN = "#A3A39C"
-COL_CENT = "#5A5A55"
-COL_RESULT = INK
-COL_NEUTRO = "#8C8C85"
+COL_OK = OK
+COL_SLIP = BAD
+COL_TAN = "#9AA4AA"
+COL_CENT = VIOLET
+COL_RESULT = ACCENT
+COL_VEL_MESA = INK
+COL_NEUTRO = "#AEB8BD"
 
 # PLC state machine states (same order in both engines)
 FASES = ["ACCEL_FAST", "CRUISE_FAST", "DECEL_TO_SLOW", "CRUISE_SLOW", "DECEL_TO_STOP", "DONE"]
@@ -99,200 +103,118 @@ FASE_CORTO = {
 # VISUAL THEME (presentation only — no effect on any calculation)
 # ==========================================
 _EJE = dict(
-    showgrid=True, gridcolor=GRID, griddash="dot", gridwidth=1, zeroline=False,
-    showline=True, linecolor=INK, linewidth=1, ticks="outside", ticklen=4, tickwidth=1, tickcolor=INK,
-    tickfont=dict(size=10, color=MUTED), title=dict(font=dict(size=10, color=MUTED), standoff=8),
+    showgrid=True, gridcolor=GRID, gridwidth=1, zeroline=False,
+    showline=True, linecolor="#C3CBD0", linewidth=1, ticks="outside", ticklen=4, tickwidth=1,
+    tickcolor="#C3CBD0", tickfont=dict(size=11, color=MUTED), title=dict(font=dict(size=11, color=INK_2), standoff=10),
 )
 pio.templates["ramps"] = go.layout.Template(layout=dict(
-    font=dict(family=FONT_MONO, size=11, color=INK),
-    title=dict(font=dict(family=FONT_MONO, size=12, color=INK), x=0.005, xanchor="left"),
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="#FFFFFF",
-    colorway=[INK, ACCENT, COL_B, COL_CENT, COL_TAN],
+    font=dict(family=FONT_UI, size=12, color=INK),
+    title=dict(font=dict(family=FONT_UI, size=14, color=INK), x=0.01, xanchor="left"),
+    paper_bgcolor=PANEL,
+    plot_bgcolor=PANEL,
+    colorway=[ACCENT, VIOLET, INK, COL_TAN],
     xaxis=_EJE, yaxis=_EJE,
-    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10, color=INK_2)),
-    hoverlabel=dict(bgcolor="#FFFFFF", bordercolor=INK, font=dict(family=FONT_MONO, size=11, color=INK)),
-    bargap=0.32, bargroupgap=0.08,
+    legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=11, color=INK_2)),
+    hoverlabel=dict(bgcolor=PANEL, bordercolor=LINE, font=dict(family=FONT_UI, size=12, color=INK)),
+    bargap=0.42, bargroupgap=0.12,
 ))
 pio.templates.default = "plotly_white+ramps"
 
-_PLUS = ("url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E"
-         "%3Cpath d='M4.5 0v9M0 4.5h9' stroke='%23A3A39C'/%3E%3C/svg%3E\")")
-
+# Colors below mirror the palette constants above.
 CSS_TEMA = """
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&display=swap');
 
 .stApp {
-  --ink: %(ink)s; --ink-2: %(ink2)s; --muted: %(muted)s; --line: %(line)s; --line-strong: #B9B9B2;
-  --panel: %(panel)s; --accent: %(accent)s; --accent-tint: #FFF1EB; --hatch: #CFCFCA;
-  --mono: %(mono)s; --plus: %(plus)s;
-  background-color: #ECECE9;
-  background-image: radial-gradient(circle at 1px 1px, rgba(20, 20, 20, .09) 1px, transparent 1.3px);
-  background-size: 18px 18px;
-  font-family: var(--mono);
+  --ink: #1E2629; --ink-2: #4F5B61; --muted: #7C878D; --line: #DCE1E4; --line-2: #C3CBD0;
+  --page: #F2F4F5; --panel: #FFFFFF; --track: #E9EDEF;
+  --accent: #13568F; --violet: #6B5BD6; --ok: #237F52; --ok-wash: #E7F3EC; --bad: #B3261E; --bad-wash: #FBEAE8;
+  --ui: Archivo, 'Helvetica Neue', Arial, sans-serif;
 }
-.stApp, .stApp p, .stApp label, .stApp input, .stApp button { font-family: var(--mono); }
+.stApp, .stApp p, .stApp li, .stApp label, .stApp input, .stApp button, .stApp summary { font-family: var(--ui); }
 
-/* ---- Corner crosshairs for panels ---- */
-.stApp [data-testid="stMetric"], .stApp [data-testid="stPlotlyChart"], .stApp [class*="st-key-resumen"] {
-  background-image: var(--plus), var(--plus), var(--plus), var(--plus);
-  background-position: left 5px top 5px, right 5px top 5px, left 5px bottom 5px, right 5px bottom 5px;
-  background-repeat: no-repeat;
+/* ---- Type scale: semi-condensed Archivo for headings and figures ---- */
+.stApp h1, .stApp h2, .stApp h3, .stApp [data-testid="stMetricValue"], .rk-headline, .rk-figs dd {
+  font-stretch: 87.5%;
 }
-
-/* ---- Top bar & navigation ---- */
-.stApp header[data-testid="stHeader"] { background: var(--panel); border-bottom: 1px solid var(--line); }
-.stApp a[data-testid="stTopNavLink"] { border-radius: 0; background: transparent !important; }
-.stApp a[data-testid="stTopNavLink"] span {
-  font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
-}
-.stApp a[data-testid="stTopNavLink"][aria-current="page"] { box-shadow: inset 0 -2px 0 var(--accent); }
-.stApp a[data-testid="stTopNavLink"][aria-current="page"] span { color: var(--ink); font-weight: 600; }
-
-/* ---- Breadcrumb / status bar ---- */
-.hud-bar {
-  display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: .5rem 1.25rem;
-  padding: .55rem .85rem; background: var(--panel); border: 1px solid var(--line); font-size: .74rem;
-}
-.hud-path { color: var(--muted); }
-.hud-path i { font-style: normal; margin: 0 .2rem; color: var(--line-strong); }
-.hud-path b { color: var(--ink); font-weight: 600; }
-.hud-meta { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem 1.1rem; }
-.hud-kv { color: var(--muted); white-space: nowrap; }
-.hud-kv b { color: var(--ink); font-weight: 500; margin-left: .45rem; }
-.hud-chip {
-  font-size: .68rem; letter-spacing: .14em; padding: .34rem .75rem; border: 1px solid var(--ink);
-  color: var(--ink); white-space: nowrap;
-}
-.hud-chip::before {
-  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: .55rem;
-  background: currentColor; vertical-align: 1px;
-}
-.hud-chip.is-crit { background: var(--accent); border-color: var(--accent); color: #fff; }
-.hud-label {
-  display: flex; justify-content: space-between; gap: 1rem; padding-bottom: .55rem; margin-bottom: .2rem;
-  border-bottom: 1px solid var(--line); font-size: .7rem; letter-spacing: .14em; color: var(--ink);
-}
-.hud-label span { color: var(--muted); letter-spacing: .04em; }
-
-/* ---- Headings ---- */
-.stApp [data-testid="stMain"] h1 {
-  font-size: 1.55rem; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; padding: .9rem 0 .2rem;
-}
-.stApp [data-testid="stMain"] h1::before { content: "["; color: var(--muted); font-weight: 300; margin-right: .3em; }
-.stApp [data-testid="stMain"] h1::after { content: "]"; color: var(--muted); font-weight: 300; margin-left: .3em; }
-.stApp h2 { font-size: 1.05rem; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
-.stApp [data-testid="stMain"] h3, .stApp [data-testid="stExpander"] h3 {
-  font-size: .78rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--ink);
-}
-.stApp [data-testid="stMain"] h3::before, .stApp [data-testid="stExpander"] h3::before {
-  content: ""; display: inline-block; width: 6px; height: 6px; margin-right: .65rem;
-  background: var(--accent); vertical-align: 2px;
-}
-.stApp [data-testid="stMain"] [data-testid="stHeading"]:has(h3) {
-  border-bottom: 1px solid var(--line); padding-bottom: .1rem; margin-top: .9rem;
-}
+.stApp [data-testid="stMain"] h1 { font-size: 2.15rem; font-weight: 700; letter-spacing: -.012em; color: var(--ink); }
+.stApp h2 { font-size: 1.4rem; font-weight: 650; letter-spacing: -.005em; }
+.stApp h3 { font-size: 1.15rem; font-weight: 650; color: var(--ink); }
+.stApp [data-testid="stMain"] [data-testid="stHeading"]:has(h3) { margin-top: .6rem; }
 .stApp [data-testid="stCaptionContainer"], .stApp [data-testid="stCaptionContainer"] p {
-  color: var(--muted); font-size: .74rem; line-height: 1.6;
+  color: var(--ink-2); font-size: .86rem; line-height: 1.55; max-width: 80ch;
+}
+.stApp [data-testid="stMarkdownContainer"] code {
+  color: var(--ink); background: var(--track); border-radius: 4px; padding: .08em .35em; font-size: .85em;
 }
 
-/* ---- Sidebar ---- */
+/* ---- Chrome ---- */
+.stApp header[data-testid="stHeader"] { background: var(--panel); border-bottom: 1px solid var(--line); }
 .stApp [data-testid="stSidebar"] { background: var(--panel); border-right: 1px solid var(--line); }
-.stApp [data-testid="stSidebar"] h2 { font-size: .95rem; letter-spacing: .12em; }
-.stApp [data-testid="stSidebar"] h2::before { content: "["; margin-right: .25em; }
-.stApp [data-testid="stSidebar"] h2::after {
-  content: "]"; margin-left: .25em; padding-right: 1.6rem;
-  background: linear-gradient(var(--accent), var(--accent)) right center / 14px 8px no-repeat;
+.stApp [data-testid="stSidebar"] h2 { font-size: 1.2rem; }
+.stApp [data-testid="stSidebar"] [data-testid="stHeading"]:has(h3) {
+  margin-top: .9rem; padding-top: .9rem; border-top: 1px solid var(--line);
 }
-.stApp [data-testid="stSidebar"] [data-testid="stHeading"]:has(h3)::before {
-  content: ""; display: block; height: 9px; margin: .9rem 0 .8rem;
-  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
-  background: repeating-linear-gradient(-45deg, var(--hatch) 0 1px, transparent 1px 6px);
-}
-.stApp [data-testid="stSidebar"] h3 {
-  font-size: .7rem; font-weight: 500; letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
-}
-.stApp [data-testid="stWidgetLabel"] p { font-size: .74rem; color: var(--ink-2); }
+.stApp [data-testid="stSidebar"] h3 { font-size: .95rem; font-weight: 650; color: var(--ink); }
+.stApp [data-testid="stWidgetLabel"] p { font-size: .84rem; color: var(--ink-2); }
 .stApp [data-testid="stNumberInputField"] { font-variant-numeric: tabular-nums; }
 
-/* ---- Metrics as instrument tiles ---- */
-.stApp [data-testid="stMetric"] {
-  background-color: var(--panel); border: 1px solid var(--line); padding: .85rem 1rem .75rem; height: 100%%;
-}
-.stApp [data-testid="stMetricLabel"] p { font-size: .7rem; color: var(--muted); letter-spacing: .03em; }
-.stApp [data-testid="stMetricValue"] {
-  font-size: 1.4rem; font-weight: 300; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums;
-}
-.stApp [data-testid="stMetricDelta"] { font-size: .7rem; }
-
-/* Summary panel: one wide instrument strip, columns split by hairlines */
-.stApp [class*="st-key-resumen"] {
-  background-color: var(--panel); border: 1px solid var(--line) !important; border-radius: 0 !important;
-}
-.stApp [class*="st-key-resumen"] [data-testid="stMetric"] { background: none; border: none; padding: .35rem 0 .2rem; }
-.stApp [class*="st-key-resumen"] [data-testid="stMetricValue"] { font-size: 1.75rem; }
-.stApp [class*="st-key-resumen"] [data-testid="stColumn"] + [data-testid="stColumn"] {
-  border-left: 1px solid var(--line); padding-left: 1rem;
-}
-@media (max-width: 640px) {
-  .stApp [class*="st-key-resumen"] [data-testid="stColumn"] + [data-testid="stColumn"] {
-    border-left: none; padding-left: 0; border-top: 1px solid var(--line); padding-top: .5rem;
-  }
-}
+/* ---- Metrics as quiet readouts ---- */
+.stApp [data-testid="stMetric"] { border-left: 2px solid var(--line); padding: .15rem 0 .15rem .85rem; }
+.stApp [data-testid="stMetricLabel"] p { font-size: .82rem; color: var(--ink-2); }
+.stApp [data-testid="stMetricValue"] { font-size: 1.6rem; font-weight: 600; color: var(--ink); letter-spacing: -.01em; }
+.stApp [data-testid="stMetricDelta"] { font-size: .8rem; }
 
 /* ---- Tabs ---- */
-.stApp [data-testid="stTabs"] [data-baseweb="tab-list"] { gap: 0; border-bottom: 1px solid var(--line); }
-.stApp [data-testid="stTab"] { padding: .6rem 1.1rem; height: auto; background: transparent; }
-.stApp [data-testid="stTab"] p {
-  font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); white-space: nowrap;
-}
-.stApp [data-testid="stTab"][aria-selected="true"] p { color: var(--ink); font-weight: 600; }
+.stApp [data-testid="stTab"] p { font-size: .93rem; font-weight: 500; color: var(--muted); white-space: nowrap; }
+.stApp [data-testid="stTab"][aria-selected="true"] p { color: var(--ink); font-weight: 650; }
 .stApp [data-testid="stTab"]:hover p { color: var(--ink); }
-.stApp [data-baseweb="tab-border"] { display: none; }
 
-/* ---- Charts ---- */
-.stApp [data-testid="stPlotlyChart"] { background-color: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+/* ---- Surfaces: charts, expanders, alerts ---- */
+.stApp [data-testid="stPlotlyChart"] {
+  background: var(--panel); border-radius: 10px; box-shadow: 0 0 0 1px var(--line); overflow: hidden;
+}
+.stApp [data-testid="stExpander"] details { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.stApp [data-testid="stExpander"] summary p { font-weight: 600; }
+.stApp [data-testid="stAlertContainer"] { border-radius: 8px; }
+.stApp [data-testid="stAlertContainer"] [data-testid="stMarkdownContainer"] p { font-size: .9rem; }
 
-/* ---- Alerts as tagged console messages ---- */
-.stApp [data-testid="stAlertContainer"] {
-  border-radius: 0; background: var(--panel); color: var(--ink);
-  border: 1px solid var(--line); border-left: 3px solid var(--muted);
+/* ---- Verdict panel (top of each section) ---- */
+.rk-verdict { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.rk-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 27rem; gap: 1.25rem 2.5rem; align-items: center;
+  padding: 1.25rem 1.5rem 1.3rem 1.35rem; border-left: 6px solid var(--ok);
 }
-.stApp [data-testid="stAlertContainer"] [data-testid="stMarkdownContainer"],
-.stApp [data-testid="stAlertContainer"] [data-testid="stMarkdownContainer"] p { color: var(--ink); font-size: .8rem; }
-.stApp [data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]) {
-  border-left-color: var(--accent); background: var(--accent-tint);
+.rk-row + .rk-row { border-top: 1px solid var(--line); }
+.rk-row.is-bad { border-left-color: var(--bad); }
+.rk-profile { display: flex; align-items: center; gap: .5rem; font-size: .84rem; color: var(--ink-2); margin-bottom: .2rem; }
+.rk-profile i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; background: var(--key); }
+.rk-headline { display: flex; align-items: center; gap: .6rem; font-size: 1.55rem; font-weight: 650; color: var(--ink); line-height: 1.2; }
+.rk-icon {
+  flex: none; display: inline-grid; place-items: center; width: 1.45rem; height: 1.45rem; border-radius: 50%;
+  background: var(--ok); color: #fff; font-size: .85rem; font-weight: 700; font-stretch: 100%;
 }
-.stApp [data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) { border-left-color: var(--accent); }
-.stApp [data-testid="stAlertContainer"]:has([data-testid="stAlertContentSuccess"]) { border-left-color: var(--ink); }
-.stApp [data-testid^="stAlertContent"] { display: flex; align-items: flex-start; gap: .8rem; }
-.stApp [data-testid^="stAlertContent"]::before {
-  flex: none; margin-top: .1rem; padding: .12rem .45rem; border: 1px solid currentColor;
-  font-size: .62rem; letter-spacing: .14em; line-height: 1.4;
+.is-bad .rk-icon { background: var(--bad); }
+.rk-where { margin-top: .25rem; font-size: .9rem; color: var(--ink-2); }
+.rk-meter { position: relative; margin-top: 1.4rem; max-width: 640px; }
+.rk-track { position: relative; height: 10px; border-radius: 5px; background: var(--track); }
+.rk-fill { position: absolute; inset: 0 auto 0 0; border-radius: 5px; background: var(--ok); }
+.is-bad .rk-fill { background: var(--bad); }
+.rk-limit { position: absolute; top: -6px; bottom: -6px; width: 2px; margin-left: -1px; background: var(--ink); }
+.rk-limit span { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); font-size: .78rem; color: var(--ink); line-height: 1.4; }
+.rk-read { margin-top: .5rem; font-size: .86rem; color: var(--ink-2); }
+.rk-read b { color: var(--ink); font-weight: 600; }
+.rk-figs { display: grid; grid-template-columns: 1fr 1fr 1.35fr; gap: 0 1.5rem; margin: 0; }
+.rk-figs div { min-width: 0; }
+.rk-figs dt { font-size: .82rem; color: var(--ink-2); white-space: nowrap; }
+.rk-figs dd { margin: .1rem 0 0; font-size: 1.75rem; font-weight: 600; color: var(--ink); line-height: 1.15; white-space: nowrap; }
+.rk-figs dd small { display: block; font-size: .78rem; font-weight: 500; color: var(--ink-2); font-stretch: 100%; margin-top: .15rem; }
+@media (max-width: 900px) {
+  .rk-row { grid-template-columns: 1fr; padding: 1.1rem 1.1rem 1.2rem 1rem; }
+  .rk-figs { display: flex; flex-wrap: wrap; gap: 1rem 1.75rem; }
+  .rk-headline { font-size: 1.3rem; }
+  .rk-figs dd { font-size: 1.45rem; }
 }
-.stApp [data-testid="stAlertContentError"]::before { content: "CRIT"; color: #fff; background: var(--accent); border-color: var(--accent); }
-.stApp [data-testid="stAlertContentWarning"]::before { content: "WARN"; color: var(--accent); }
-.stApp [data-testid="stAlertContentInfo"]::before { content: "INFO"; color: var(--muted); }
-.stApp [data-testid="stAlertContentSuccess"]::before { content: "OK"; color: var(--ink); }
-
-/* ---- Dividers as hatched rules ---- */
-.stApp hr {
-  height: 9px; border: none !important; margin: .9rem 0 !important; background-color: transparent;
-  border-top: 1px solid var(--line) !important; border-bottom: 1px solid var(--line) !important;
-  background-image: repeating-linear-gradient(-45deg, var(--hatch) 0 1px, transparent 1px 6px);
-}
-
-/* ---- Expanders, code, formulas ---- */
-.stApp [data-testid="stExpander"] details { border: 1px solid var(--line); border-radius: 0; background: var(--panel); }
-.stApp [data-testid="stExpander"] summary p { font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; }
-.stApp [data-testid="stMarkdownContainer"] code {
-  color: var(--ink); background: #E9E9E5; border: 1px solid var(--line); border-radius: 0; padding: .05em .35em;
-}
-.stApp .katex-display {
-  margin: .35rem 0; padding: .55rem .9rem; overflow-x: auto;
-  background: var(--panel); border-left: 2px solid var(--line-strong);
-}
-""" % dict(ink=INK, ink2=INK_2, muted=MUTED, line=LINE, panel=PANEL, accent=ACCENT, mono=FONT_MONO, plus=_PLUS)
+"""
 
 
 def aplicar_tema():
@@ -300,25 +222,49 @@ def aplicar_tema():
     st.html(f"<style>{CSS_TEMA}</style>")
 
 
-def barra_hud(seccion, datos, alerta):
-    """Breadcrumb + key values + status chip, as the top bar of each section."""
-    kv = "".join(f"<span class='hud-kv'>{k}<b>{v}</b></span>" for k, v in datos)
-    chip = ("<span class='hud-chip is-crit'>SLIP RISK</span>" if alerta
-            else "<span class='hud-chip'>STABLE</span>")
-    st.html(
-        f"<div class='hud-bar'><div class='hud-path'>Kinematic Simulator<i>/</i>RAMPS<i>/</i><b>{seccion}</b></div>"
-        f"<div class='hud-meta'>{kv}{chip}</div></div>"
-    )
+def panel_veredicto(filas):
+    """Verdict panel: does the part slip, peak G against μ on a shared scale, and the key figures.
+
+    filas: list of dicts with keys slip, peak, mu, where, figs [(label, value, note)], and optionally
+    perfil / color for the A-vs-B comparison.
+    """
+    escala = max(max(f["peak"], f["mu"]) for f in filas) / 0.85
+    escala = escala if escala > 0 else 1.0
+    bloques = []
+    for f in filas:
+        estado = "is-bad" if f["slip"] else "is-ok"
+        titular = "The part slips" if f["slip"] else "The part stays in place"
+        icono = "✕" if f["slip"] else "✓"
+        perfil = (f"<div class='rk-profile'><i style='--key:{f['color']}'></i>{f['perfil']}</div>"
+                  if f.get("perfil") else "")
+        relleno = min(f["peak"] / escala * 100, 100)
+        limite = min(f["mu"] / escala * 100, 100)
+        figs = "".join(
+            f"<div><dt>{lab}</dt><dd>{val}{f'<small>{nota}</small>' if nota else ''}</dd></div>"
+            for lab, val, nota in f["figs"]
+        )
+        bloques.append(
+            f"<div class='rk-row {estado}'><div>{perfil}"
+            f"<div class='rk-headline'><span class='rk-icon'>{icono}</span>{titular}</div>"
+            f"<div class='rk-where'>Most critical point: {f['where']}</div>"
+            f"<div class='rk-meter'><div class='rk-track'><div class='rk-fill' style='width:{relleno:.1f}%'></div>"
+            f"<div class='rk-limit' style='left:{limite:.1f}%'><span>μ</span></div></div></div>"
+            f"<div class='rk-read'>Peak <b>{f['peak']:.3f} G</b> against a friction limit of <b>{f['mu']:.2f} G</b></div>"
+            f"</div><dl class='rk-figs'>{figs}</dl></div>"
+        )
+    st.html(f"<div class='rk-verdict'>{''.join(bloques)}</div>")
 
 
-def etiqueta_panel(titulo, meta=""):
-    """Small header line for a panel (title left, metadata right)."""
-    st.html(f"<div class='hud-label'><b>{titulo.upper()}</b><span>{meta}</span></div>")
+def aviso(tipo, texto):
+    """Status message with its icon, so state never relies on color alone."""
+    iconos = {"error": ":material/error:", "warning": ":material/warning:",
+              "info": ":material/info:", "success": ":material/check_circle:"}
+    getattr(st, tipo)(texto, icon=iconos[tipo])
 
 
 def subtitulos_izquierda(fig):
-    """Subplot titles as small left-aligned labels (call right after make_subplots)."""
-    fig.update_annotations(font=dict(family=FONT_MONO, size=11, color=INK_2), x=0, xanchor="left")
+    """Subplot titles as left-aligned chart headings (call right after make_subplots)."""
+    fig.update_annotations(font=dict(family=FONT_UI, size=13, color=INK), x=0, xanchor="left")
 
 
 aplicar_tema()
@@ -758,11 +704,16 @@ def calcular_perfil_mesa(omega_fast, omega_slow, alpha_accel, alpha_decel,
 # PRESENTATION HELPERS
 # ==========================================
 def fmt_fs(fs):
-    return "∞" if fs == float('inf') else f"{fs:.2f}x"
+    return "∞" if fs == float('inf') else f"{fs:.2f}×"
 
 
 def estado_txt(desliza):
-    return "▲ SLIPPING" if desliza else "■ STABLE"
+    return "Slipping" if desliza else "Stable"
+
+
+def delta_mu(g, mu):
+    """Margin against μ for st.metric (use delta_color='inverse': red above μ, green below)."""
+    return f"{g - mu:+.3f} G vs μ"  # keep the ASCII sign: Streamlit reads it for the arrow/color
 
 
 def indices_grafica(fase, paso=5):
@@ -806,10 +757,10 @@ def bandas_fase(fig, segs, g_fase, mu, t_total, fila_etiquetas=2):
         g = g_fase(sg)
         desliza = g > mu
         if desliza:
-            fig.add_vrect(x0=sg["t0"], x1=sg["t1"], fillcolor=COL_SLIP, opacity=0.12,
+            fig.add_vrect(x0=sg["t0"], x1=sg["t1"], fillcolor=COL_SLIP, opacity=0.09,
                           line_width=0, layer="below", row="all", col=1)
         elif sg["fase"] not in ("CRUISE_FAST", "CRUISE_SLOW"):
-            fig.add_vrect(x0=sg["t0"], x1=sg["t1"], fillcolor=COL_NEUTRO, opacity=0.08,
+            fig.add_vrect(x0=sg["t0"], x1=sg["t1"], fillcolor=COL_NEUTRO, opacity=0.14,
                           line_width=0, layer="below", row="all", col=1)
         if t_total > 0 and (sg["t1"] - sg["t0"]) / t_total >= 0.07:
             fig.add_annotation(
@@ -820,7 +771,7 @@ def bandas_fase(fig, segs, g_fase, mu, t_total, fila_etiquetas=2):
 
 
 COL_OK_TXT = INK
-COL_BORDE_OK = "#B9B9B2"
+COL_BORDE_OK = "#C3CBD0"
 
 
 def ticks_bonitos(lo, hi, max_ticks=5):
@@ -859,8 +810,8 @@ def distribuir_x(deseadas, lo, hi, sep):
 
 def texto_etiqueta(titulo, valor, desliza, detalle, color_titulo=INK_2):
     color_val = COL_SLIP if desliza else COL_OK_TXT
-    return (f"<span style='font-size:10px;color:{color_titulo}'><b>{titulo}</b></span><br>"
-            f"<span style='font-size:14px;color:{color_val}'>{valor}</span><br>"
+    return (f"<span style='font-size:10px;color:{color_titulo}'>{titulo}</span><br>"
+            f"<span style='font-size:14px;color:{color_val}'><b>{valor}</b></span><br>"
             f"<span style='font-size:10px;color:{MUTED}'>{detalle}</span>")
 
 
@@ -878,9 +829,9 @@ def fila_etiquetas(fig, items, y_fila, t_total, row=2):
             ax=x_lab, ay=y_fila, axref=xr, ayref=yr,
             text=it["texto"], align="center", showarrow=True,
             arrowhead=2, arrowsize=0.9, arrowwidth=1, arrowcolor=borde, standoff=3,
-            bgcolor="rgba(250,250,248,0.97)", bordercolor=borde,
+            bgcolor="rgba(255,255,255,0.97)", bordercolor=borde,
             borderwidth=2 if it.get("peor") else 1, borderpad=5,
-            font=dict(family=FONT_MONO, size=11, color=INK),
+            font=dict(family=FONT_UI, size=11, color=INK),
         )
 
 
@@ -957,8 +908,7 @@ def series_g_mesa(m):
 # ==========================================
 def sidebar_mesa():
     sb = st.sidebar
-    sb.header("Parameters")
-    sb.caption("Turntable · PLC setup")
+    sb.header("Turntable parameters")
 
     sb.subheader("Kinematics (PLC)")
     sb.number_input("SPEED_AUTO_FAST TABLE (°/s)", step=5.0, key="speed_fast_mesa")
@@ -1012,13 +962,13 @@ def figura_movimiento_mesa(m):
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True, row_heights=[0.46, 0.54], vertical_spacing=0.08,
         subplot_titles=("Turntable angular velocity (°/s)",
-                        f"Acceleration on the part at R_max = {m['r_max']:.0f} mm (G) — shaded band = within μ"),
+                        f"Acceleration on the part at R_max = {m['r_max']:.0f} mm (G) — green band = within μ"),
     )
     subtitulos_izquierda(fig)
 
     fig.add_trace(go.Scatter(
         x=t[idx], y=omega[idx], mode="lines", name="Angular velocity ω",
-        line=dict(color=COL_A, width=2.2),
+        line=dict(color=COL_VEL_MESA, width=2),
         customdata=np.column_stack([theta[idx], nombres[idx]]),
         hovertemplate="ω = %{y:.2f} °/s · θ = %{customdata[0]:.2f}° · %{customdata[1]}<extra></extra>",
     ), row=1, col=1)
@@ -1033,12 +983,12 @@ def figura_movimiento_mesa(m):
     ), row=2, col=1)
     fig.add_trace(go.Scatter(
         x=t[idx], y=g_res[idx], mode="lines", name="Resultant",
-        line=dict(color=COL_RESULT, width=2.2), hovertemplate="%{y:.3f} G",
+        line=dict(color=COL_RESULT, width=2), hovertemplate="%{y:.3f} G",
     ), row=2, col=1)
 
     mu = m["mu"]
     g_top = max(float(np.max(g_res)) if len(g_res) else 0.0, mu, 1e-3)
-    fig.add_hrect(y0=0, y1=mu, fillcolor=COL_OK, opacity=0.05, line_width=0, layer="below", row=2, col=1)
+    fig.add_hrect(y0=0, y1=mu, fillcolor=COL_OK, opacity=0.07, line_width=0, layer="below", row=2, col=1)
     fig.add_hline(y=mu, line_width=1.5, line_dash="dash", line_color=COL_SLIP, row=2, col=1)
     entrada_leyenda(fig, f"Friction limit μ = {mu:.2f}", COL_SLIP, "dash", row=2, col=1)
 
@@ -1099,7 +1049,7 @@ def tabla_fases_mesa(m):
             "Tangential G": round(tan, 3),
             "Max centripetal G": round(cent, 3),
             "Max resultant G": round(res, 3),
-            "Status": "▲ Exceeds μ" if res > m["mu"] else "■ OK",
+            "Status": "✕ Exceeds μ" if res > m["mu"] else "✓ Within μ",
         })
     return filas
 
@@ -1139,7 +1089,7 @@ def figura_equivalencia(m, conv_a):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=m["t"][idx_m], y=v_mesa[idx_m], mode="lines",
                              name=f"Turntable — linear velocity at R_max ({m['r_max']:.0f} mm)",
-                             line=dict(color=COL_A, width=2.2), hovertemplate="%{y:.1f} mm/s"))
+                             line=dict(color=COL_A, width=2), hovertemplate="%{y:.1f} mm/s"))
     fig.add_trace(go.Scatter(x=conv_a["t"][idx_c], y=conv_a["vel"][idx_c], mode="lines",
                              name="Conveyor — Profile A", line=dict(color=COL_NEUTRO, width=1.8, dash="dash"),
                              hovertemplate="%{y:.1f} mm/s"))
@@ -1159,8 +1109,6 @@ def pagina_mesa():
     R_sensor = ss.radio_sensor_mesa
     modo_key = modo_conversion_key()
 
-    barra_hud("Turntable", [("μ", f"{ss.mu_mesa:.2f}"), ("R_max", f"{r_max_mesa:.0f} mm"),
-                            ("Cycle", f"{t_m[-1]:.2f} s")], det_m['se_desliza_resultante'])
     st.title("Turntable", anchor=False)
     st.caption(
         f"Part centered on the rotation axis. R_max (slip) = Length/2 = {r_max_mesa:.1f} mm. "
@@ -1168,33 +1116,30 @@ def pagina_mesa():
         f"to convert sensor positions between degrees and mm."
     )
 
+    # ---- Verdict: combined worst case (tangential + centripetal) against μ ----
+    panel_veredicto([dict(
+        slip=det_m['se_desliza_resultante'], peak=det_m['g_res_max'], mu=ss.mu_mesa,
+        where=det_m['peor_caso_label'],
+        figs=[("Safety factor", fmt_fs(det_m['factor_seguridad_resultante']), "μ / peak"),
+              ("Cycle time", f"{t_m[-1]:.2f} s", ""),
+              ("Angular overrun", f"{m['ang_overrun']:.3f}°", "")],
+    )])
+
     # ---- Configuration alerts ----
     if det_m['insufficient_angle']:
-        st.warning(
+        aviso("warning",
             f"**Inconsistent configuration:** `RAMP_DECEL TABLE` needs "
             f"**{det_m['angle_needed_decel']:.1f}°** to go from SPEED_AUTO_FAST down to SPEED_AUTO_SLOW, "
             f"but the `Slowdown Sensor Distance TABLE` ({ss.sensor_distance_mm_mesa:.1f} mm ≈ "
             f"{m['sensor_angle']:.1f}°) is not enough."
         )
     if det_m['mechanically_capped']:
-        st.info(
+        aviso("info",
             f"Configured `RAMP_STOP TABLE` ({ss.ramp_stop_mesa:.1f} °/s²) exceeds the "
             f"achievable mechanical maximum ({det_m['alpha_mechanical_max']:.1f} °/s², limited by the "
             f"{T_MIN_MECANICO_MS:.0f} ms floor). The mechanical limit was applied: actual angular deceleration = "
             f"**{det_m['alpha_stop']:.1f} °/s²** (≈{det_m['ramp_stop_real_ms']:.1f} ms)."
         )
-
-    # ---- Summary ----
-    with st.container(border=True, key="resumen_mesa"):
-        etiqueta_panel("Cycle summary", "SIM · Δt 1 ms")
-        v1, v2, v3, v4, v5 = st.columns(5)
-        v1.metric("Status (combined worst case)", estado_txt(det_m['se_desliza_resultante']),
-                  help="Most complete criterion: tangential + centripetal at the critical instants.")
-        v2.metric("Max acceleration on the part", f"{det_m['g_res_max']:.3f} G",
-                  help=f"Occurs at: {det_m['peor_caso_label']}")
-        v3.metric("Safety factor", fmt_fs(det_m['factor_seguridad_resultante']))
-        v4.metric("Cycle time", f"{t_m[-1]:.2f} s")
-        v5.metric("Angular overrun", f"{m['ang_overrun']:.3f}°")
 
     tab_mov, tab_slip, tab_sens, tab_eq, tab_fund = st.tabs([
         "Motion", "Slip", "Sensors & adjustment", "Conveyor equivalence",
@@ -1206,7 +1151,7 @@ def pagina_mesa():
         st.plotly_chart(figura_movimiento_mesa(m), theme=None)
         st.caption(
             "Labels: maximum resultant acceleration of each phase with its tangential (ramp) and "
-            "centripetal (ω²·R) components — black = within μ, orange = exceeds μ, thick border = most critical phase. "
+            "centripetal (ω²·R) components — dark = within μ, red = exceeds μ, thick border = most critical phase. "
             "Bands: PLC phases. Hover over the velocity curve to see the angle θ at each instant."
         )
 
@@ -1236,7 +1181,7 @@ def pagina_mesa():
         for col, (label, g_val) in zip(res_cols, det_m['resultantes'].items()):
             is_worst = (label == det_m['peor_caso_label'])
             col.metric(label.split(" (")[0], f"{g_val:.3f} G",
-                       delta="▲ WORST CASE" if is_worst else None, delta_color="off", help=label)
+                       delta="Worst case" if is_worst else None, delta_color="off", help=label)
 
         rc1, rc2 = st.columns(2)
         rc1.metric("Combined Worst Case (Max Resultant)", f"{det_m['g_res_max']:.3f} G",
@@ -1244,22 +1189,23 @@ def pagina_mesa():
         rc2.metric("Resultant Safety Factor (μ / g_res_max)", fmt_fs(det_m['factor_seguridad_resultante']))
 
         if det_m['se_desliza_resultante'] and not m['desliza']:
-            st.warning(
+            aviso("warning",
                 f"**Difference detected:** the current criterion (tangential only) says **STABLE**, but the "
                 f"resultant criterion shows that at **{det_m['peor_caso_label']}** the total force "
                 f"({det_m['g_res_max']:.3f} G) **exceeds** μ ({ss.mu_mesa:.2f} G)."
             )
         elif det_m['se_desliza_resultante']:
-            st.error(f"The resultant criterion confirms slip — worst case at **{det_m['peor_caso_label']}**.")
+            aviso("error", f"The resultant criterion confirms slip — worst case at **{det_m['peor_caso_label']}**.")
         else:
-            st.success("Even considering the combined worst case, the part stays stable throughout the cycle.")
+            aviso("success", "Even considering the combined worst case, the part stays stable throughout the cycle.")
 
         st.divider()
         st.subheader("Final stop (tangential component)")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Tangential Deceleration (stop)", f"{m['g_conv']:.3f} G")
         m2.metric("Friction Limit (μ)", f"{ss.mu_mesa:.2f} G")
-        m3.metric("Stability When Stopping", estado_txt(m['desliza']))
+        m3.metric("Stability When Stopping", estado_txt(m['desliza']),
+                  delta=delta_mu(m['g_conv'], ss.mu_mesa), delta_color="inverse")
         m4.metric("Relative Slip",
                   f"{det_m['deslizamiento_deg_stop']:.4f}° ({m['d_desliza_mm']:.3f} mm)" if m['desliza'] else "0.0000°")
         st.metric("Safety Factor When Stopping (μ / g_tan)", fmt_fs(det_m['factor_seguridad_stop']))
@@ -1272,17 +1218,19 @@ def pagina_mesa():
         )
         mc1, mc2, mc3, mc4 = st.columns(4)
         mc1.metric("Centripetal G @ Fast Speed", f"{det_m['g_cent_fast']:.3f} G")
-        mc2.metric("Stability @ Fast", "▲ RISK" if det_m['se_desliza_cruise_fast'] else "■ OK")
+        mc2.metric("Stability @ Fast", "Risk" if det_m['se_desliza_cruise_fast'] else "OK",
+                   delta=delta_mu(det_m['g_cent_fast'], ss.mu_mesa), delta_color="inverse")
         mc3.metric("Centripetal G @ Slow Speed", f"{det_m['g_cent_slow']:.3f} G")
-        mc4.metric("Stability @ Slow", "▲ RISK" if det_m['se_desliza_cruise_slow'] else "■ OK")
+        mc4.metric("Stability @ Slow", "Risk" if det_m['se_desliza_cruise_slow'] else "OK",
+                   delta=delta_mu(det_m['g_cent_slow'], ss.mu_mesa), delta_color="inverse")
 
         if det_m['se_desliza_cruise_fast'] or det_m['se_desliza_cruise_slow']:
-            st.error(
+            aviso("error",
                 "**Slip risk while cruising detected.** The centripetal force at this angular speed "
                 "and radius exceeds the available friction."
             )
         else:
-            st.success("The centripetal force at both cruise speeds is within the friction limit.")
+            aviso("success", "The centripetal force at both cruise speeds is within the friction limit.")
 
         with st.expander("View calculation breakdown — Turntable"):
             st.markdown("### Calculation Report (Simulated Values)")
@@ -1321,9 +1269,9 @@ def pagina_mesa():
 
             st.markdown("**Step 4: Slip Criterion When Stopping (tangential only)**")
             if m['desliza']:
-                st.error(f"**SLIPS WHEN STOPPING:** g_conv ({m['g_conv']:.3f} G) > μ ({ss.mu_mesa:.2f} G)")
+                aviso("error", f"**SLIPS WHEN STOPPING:** g_conv ({m['g_conv']:.3f} G) > μ ({ss.mu_mesa:.2f} G)")
             else:
-                st.success(f"**STABLE WHEN STOPPING:** g_conv ({m['g_conv']:.3f} G) ≤ μ ({ss.mu_mesa:.2f} G)")
+                aviso("success", f"**STABLE WHEN STOPPING:** g_conv ({m['g_conv']:.3f} G) ≤ μ ({ss.mu_mesa:.2f} G)")
 
     # ------------------------------------------
     with tab_sens:
@@ -1370,7 +1318,7 @@ def pagina_mesa():
         comp2.metric("Recommended Compensated Position", f"{trigger_mm_compensado:.2f} mm",
                      delta=f"{(trigger_mm_compensado - trigger_mm_original):.3f} mm (move back)",
                      delta_color="inverse")
-        st.info(
+        aviso("info",
             f"For the table to stop at exactly the same point it would reach with "
             f"`RAMP_STOP TABLE = 0`, physically move the **stop sensor** "
             f"**{abs(trigger_mm_compensado - trigger_mm_original):.3f} mm back** along the rail."
@@ -1415,8 +1363,7 @@ def pagina_mesa():
 # ==========================================
 def sidebar_conveyor():
     sb = st.sidebar
-    sb.header("Parameters")
-    sb.caption("Linear conveyor · PLC setup")
+    sb.header("Conveyor parameters")
 
     sb.subheader("Geometry")
     sb.number_input("Total Conveyor Length (mm)", step=100.0, key="conveyor_length")
@@ -1468,7 +1415,7 @@ def figura_movimiento_conveyor(a, b=None):
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True, row_heights=[0.46, 0.54], vertical_spacing=0.08,
         subplot_titles=("Conveyor velocity (mm/s)",
-                        "Acceleration on the part (G) — shaded band = within μ"),
+                        "Acceleration on the part (G) — green band = within μ"),
     )
     subtitulos_izquierda(fig)
     perfiles = [("A", a, COL_A, "solid")] + ([("B", b, COL_B, "dashdot")] if b is not None else [])
@@ -1482,7 +1429,7 @@ def figura_movimiento_conveyor(a, b=None):
         g_abs_max = max(g_abs_max, float(np.max(np.abs(g))) if len(g) else 0.0)
         fig.add_trace(go.Scatter(
             x=s["t"][idx], y=s["vel"][idx], mode="lines", name=f"Velocity {nombre}",
-            line=dict(color=color, width=2.2, dash=dash),
+            line=dict(color=color, width=2, dash=dash),
             customdata=np.column_stack([s["pos"][idx], nombres[idx]]),
             hovertemplate=f"{nombre}: " + "%{y:.1f} mm/s · x = %{customdata[0]:.1f} mm · %{customdata[1]}<extra></extra>",
         ), row=1, col=1)
@@ -1506,7 +1453,7 @@ def figura_movimiento_conveyor(a, b=None):
 
     # Friction limit
     mu_a = a["mu"]
-    fig.add_hrect(y0=-mu_a, y1=mu_a, fillcolor=COL_OK, opacity=0.05, line_width=0, layer="below", row=2, col=1)
+    fig.add_hrect(y0=-mu_a, y1=mu_a, fillcolor=COL_OK, opacity=0.07, line_width=0, layer="below", row=2, col=1)
     for signo in (1, -1):
         fig.add_hline(y=signo * mu_a, line_width=1.5, line_dash="dash", line_color=COL_SLIP, row=2, col=1)
     entrada_leyenda(fig, f"Friction limit ±μ{' A' if b is not None else ''} = {mu_a:.2f}",
@@ -1571,7 +1518,7 @@ def tabla_fases_conveyor(s, perfil=None):
             "Travel (mm)": round(float(s["pos"][b] - s["pos"][a]), 2),
             "v start → end (mm/s)": f"{s['vel'][a]:.0f} → {s['vel'][b]:.0f}",
             "Acceleration (G)": round(g, 3),
-            "Status": "▲ Exceeds μ" if g > s["mu"] else "■ OK",
+            "Status": "✕ Exceeds μ" if g > s["mu"] else "✓ Within μ",
         })
         filas.append(fila)
     return filas
@@ -1623,65 +1570,56 @@ def pagina_conveyor():
     det_a = A["det"]
     det_b = B["det"] if comparar else None
 
-    hud = [("μ", f"{ss.mu_a:.2f}"), ("L", f"{ss.conveyor_length:.0f} mm"), ("Cycle", f"{A['t'][-1]:.2f} s")]
-    if comparar:
-        hud = [("μ A", f"{ss.mu_a:.2f}"), ("μ B", f"{ss.mu_b:.2f}"), ("L", f"{ss.conveyor_length:.0f} mm")]
-    barra_hud("Conveyor", hud,
-              det_a['se_desliza_alguna_fase'] or bool(comparar and det_b['se_desliza_alguna_fase']))
     st.title("Linear conveyor", anchor=False)
     st.caption("Real-time analysis of the velocity profile, positioning and inertial slip of the part.")
 
+    # ---- Verdict per profile: most critical phase against μ ----
+    def fila_veredicto(s, perfil, color, ref=None):
+        d = s["det"]
+        pos_final = s["pos"][-1] + s["d_desliza"]
+        nota_t = nota_p = ""
+        if ref is not None:
+            nota_t = f"{s['t'][-1] - ref['t'][-1]:+.2f} s vs A"
+            nota_p = f"{pos_final - (ref['pos'][-1] + ref['d_desliza']):+.2f} mm vs A"
+        return dict(
+            slip=d['se_desliza_alguna_fase'], peak=d['g_max_fase'], mu=s["mu"], where=d['peor_fase_label'],
+            perfil=perfil if comparar else None, color=color,
+            figs=[("Safety factor", fmt_fs(d['factor_seguridad_fase']), "μ / peak"),
+                  ("Cycle time", f"{s['t'][-1]:.2f} s", nota_t),
+                  ("Final part position", f"{pos_final:.2f} mm", nota_p)],
+        )
+
+    filas = [fila_veredicto(A, "Profile A", COL_A)]
+    if comparar:
+        filas.append(fila_veredicto(B, "Profile B", COL_B, ref=A))
+    panel_veredicto(filas)
+
     # ---- Configuration alerts ----
     if det_a['insufficient_distance']:
-        st.warning(
+        aviso("warning",
             f"**Profile A — Inconsistent configuration:** the `RAMP_DECEL A` ramp needs "
             f"**{det_a['dist_needed_decel']:.1f} mm** to go from SPEED_AUTO_FAST down to SPEED_AUTO_SLOW, "
             f"but the `Slowdown Sensor Distance A` is only **{ss.sensor_distance_a:.1f} mm**."
         )
     if comparar and det_b['insufficient_distance']:
-        st.warning(
+        aviso("warning",
             f"**Profile B — Inconsistent configuration:** the `RAMP_DECEL B` ramp needs "
             f"**{det_b['dist_needed_decel']:.1f} mm** to go from SPEED_AUTO_FAST down to SPEED_AUTO_SLOW, "
             f"but the `Slowdown Sensor Distance B` is only **{ss.sensor_distance_b:.1f} mm**."
         )
     if det_a['mechanically_capped']:
-        st.info(
+        aviso("info",
             f"**Profile A:** configured `RAMP_STOP A` ({ss.ramp_stop_a:.1f} mm/s²) exceeds the "
             f"achievable mechanical maximum ({det_a['a_mechanical_max']:.1f} mm/s², limited by the "
             f"{T_MIN_MECANICO_MS:.0f} ms floor). The mechanical limit was applied: actual deceleration = "
             f"**{det_a['a_stop_conveyor']:.1f} mm/s²** (≈{det_a['ramp_stop_real_ms']:.1f} ms)."
         )
     if comparar and det_b['mechanically_capped']:
-        st.info(
+        aviso("info",
             f"**Profile B:** configured `RAMP_STOP B` ({ss.ramp_stop_b:.1f} mm/s²) exceeds the "
             f"achievable mechanical maximum ({det_b['a_mechanical_max']:.1f} mm/s²). The mechanical limit was applied: "
             f"actual deceleration = **{det_b['a_stop_conveyor']:.1f} mm/s²** (≈{det_b['ramp_stop_real_ms']:.1f} ms)."
         )
-
-    # ---- Summary ----
-    def fila_resumen(s, etiqueta, ref=None):
-        d = s["det"]
-        pos_final = s["pos"][-1] + s["d_desliza"]
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric(f"Status {etiqueta} (most critical phase)", estado_txt(d['se_desliza_alguna_fase']))
-        c2.metric(f"Most critical phase {etiqueta}", f"{d['g_max_fase']:.3f} G", help=d['peor_fase_label'],
-                  delta=d['peor_fase_label'].split(" (")[0], delta_color="off")
-        c3.metric(f"Safety factor {etiqueta}", fmt_fs(d['factor_seguridad_fase']))
-        if ref is None:
-            c4.metric(f"Cycle time {etiqueta}", f"{s['t'][-1]:.2f} s")
-            c5.metric(f"Final part position {etiqueta}", f"{pos_final:.2f} mm")
-        else:
-            c4.metric(f"Cycle time {etiqueta}", f"{s['t'][-1]:.2f} s",
-                      delta=f"{(s['t'][-1] - ref['t'][-1]):.2f} s vs A", delta_color="inverse")
-            ref_pos = ref["pos"][-1] + ref["d_desliza"]
-            c5.metric(f"Final part position {etiqueta}", f"{pos_final:.2f} mm",
-                      delta=f"{pos_final - ref_pos:.2f} mm vs A", delta_color="off")
-
-    with st.container(border=True, key="resumen_conveyor"):
-        etiqueta_panel("Cycle summary", "SIM · Δt 1 ms" + (" · A vs B" if comparar else ""))
-        fila_resumen(A, "A")
-        if comparar:
-            fila_resumen(B, "B", ref=A)
 
     tab_mov, tab_slip, tab_ab, tab_fund = st.tabs([
         "Motion", "Slip", "Profile A vs B", "Fundamentals",
@@ -1692,7 +1630,7 @@ def pagina_conveyor():
         st.plotly_chart(figura_movimiento_conveyor(A, B), theme=None)
         st.caption(
             "Labels: acceleration of each ramp in G, with the effective acceleration (mm/s²) and its duration — "
-            "black = within μ, orange = exceeds μ, thick border = most critical phase. While cruising the acceleration "
+            "dark = within μ, red = exceeds μ, thick border = most critical phase. While cruising the acceleration "
             "is 0 G. Bands: Profile A PLC phases. Hover over the velocity curve to see the position x."
         )
 
@@ -1721,32 +1659,33 @@ def pagina_conveyor():
         )
         fa1, fa2, fa3 = st.columns(3)
         fa1.metric("ACCEL_FAST (start-up)", f"{det_a['g_accel']:.3f} G",
-                   delta="▲ SLIP" if det_a['se_desliza_accel'] else "■ OK", delta_color="off")
+                   delta=delta_mu(det_a['g_accel'], ss.mu_a), delta_color="inverse")
         fa2.metric("DECEL_TO_SLOW (braking to creep)", f"{det_a['g_decel']:.3f} G",
-                   delta="▲ SLIP" if det_a['se_desliza_decel'] else "■ OK", delta_color="off")
+                   delta=delta_mu(det_a['g_decel'], ss.mu_a), delta_color="inverse")
         fa3.metric("DECEL_TO_STOP (final stop)", f"{A['g_conv']:.3f} G",
-                   delta="▲ SLIP" if det_a['se_desliza_stop_fase'] else "■ OK", delta_color="off")
+                   delta=delta_mu(A['g_conv'], ss.mu_a), delta_color="inverse")
 
         fb1, fb2 = st.columns(2)
         fb1.metric("Most Critical Phase", det_a['peor_fase_label'].split(" (")[0], help=det_a['peor_fase_label'])
         fb2.metric("Safety Factor of the Most Critical Phase", fmt_fs(det_a['factor_seguridad_fase']))
 
         if det_a['se_desliza_alguna_fase'] and not det_a['se_desliza_stop_fase']:
-            st.warning(
+            aviso("warning",
                 f"**Difference detected:** the final stop is STABLE, but **{det_a['peor_fase_label']}** "
                 f"reaches {det_a['g_max_fase']:.3f} G, which **exceeds** μ ({ss.mu_a:.2f} G)."
             )
         elif det_a['se_desliza_alguna_fase']:
-            st.error(f"At least one phase exceeds μ — the most critical is **{det_a['peor_fase_label']}**.")
+            aviso("error", f"At least one phase exceeds μ — the most critical is **{det_a['peor_fase_label']}**.")
         else:
-            st.success("All three speed transitions are within the friction limit.")
+            aviso("success", "All three speed transitions are within the friction limit.")
 
         st.divider()
         st.subheader("Inertia & part slip at the final stop (Profile A)")
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Conveyor Deceleration", f"{A['g_conv']:.3f} G")
         col2.metric("Friction Limit (μ)", f"{ss.mu_a:.2f} G")
-        col3.metric("Load Stability", estado_txt(A['desliza']))
+        col3.metric("Load Stability", estado_txt(A['desliza']),
+                    delta=delta_mu(A['g_conv'], ss.mu_a), delta_color="inverse")
         col4.metric("Relative Part Slip",
                     f"{A['d_desliza']:.3f} mm ({A['d_desliza']*1000:.0f} µm)" if A['desliza'] else "0.000 mm")
 
@@ -1785,7 +1724,7 @@ def pagina_conveyor():
 
             st.markdown("**Step 4: Slip Decision Criterion**")
             if A['desliza']:
-                st.error(f"**SLIP DETECTED:** g_conv ({A['g_conv']:.3f} G) > μ ({ss.mu_a:.2f} G).")
+                aviso("error", f"**SLIP DETECTED:** g_conv ({A['g_conv']:.3f} G) > μ ({ss.mu_a:.2f} G).")
                 st.markdown("**Step 5: Relative Slip Distance (Δd)**")
                 st.latex(L(
                     f"d_{{~text{{piece}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{max~_piece}}}}}} = "
@@ -1800,16 +1739,16 @@ def pagina_conveyor():
                     f"~mathbf{{{A['d_desliza']:.3f}~,~text{{mm}}}}"
                 ))
             else:
-                st.success(f"**STABLE LOAD:** g_conv ({A['g_conv']:.3f} G) ≤ μ ({ss.mu_a:.2f} G).")
+                aviso("success", f"**STABLE LOAD:** g_conv ({A['g_conv']:.3f} G) ≤ μ ({ss.mu_a:.2f} G).")
 
     # ------------------------------------------
     with tab_ab:
         if not comparar:
-            st.info("Turn on **Compare with Profile B** in the sidebar to compare two PLC configurations. "
+            aviso("info", "Turn on **Compare with Profile B** in the sidebar to compare two PLC configurations. "
                     "Profile B starts as a copy of Profile A.")
         else:
             st.subheader("Acceleration per state transition — Profile B")
-            st.caption("Deltas are B − A (orange = B demands more friction than A).")
+            st.caption("Deltas are B − A (red = B demands more friction than A).")
             fa1b, fa2b, fa3b = st.columns(3)
             fa1b.metric("ACCEL_FAST B", f"{det_b['g_accel']:.3f} G",
                         delta=f"{(det_b['g_accel'] - det_a['g_accel']):.3f} G", delta_color="inverse")
