@@ -212,6 +212,18 @@ CSS_TEMA = """
 .rk-figs dt { font-size: .82rem; color: var(--ink-2); white-space: nowrap; }
 .rk-figs dd { margin: .1rem 0 0; font-size: 1.75rem; font-weight: 600; color: var(--ink); line-height: 1.15; white-space: nowrap; }
 .rk-figs dd small { display: block; font-size: .78rem; font-weight: 500; color: var(--ink-2); font-stretch: 100%; margin-top: .15rem; }
+/* ---- Phone view: readout cards in a grid that keeps its columns on narrow screens ---- */
+.rk-cards { display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: .5rem; margin: .2rem 0 .8rem; }
+.rk-card { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .55rem .7rem .6rem; min-width: 0; }
+.rk-card.is-bad { border-color: var(--bad); box-shadow: inset 3px 0 0 var(--bad); }
+.rk-card.is-ok { box-shadow: inset 3px 0 0 var(--ok); }
+.rk-card dt { display: flex; align-items: center; gap: .35rem; font-size: .74rem; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rk-card dt i { flex: none; width: 12px; height: 3px; border-radius: 2px; background: var(--key); }
+.rk-card dd { margin: .15rem 0 0; font-size: 1.3rem; font-weight: 650; color: var(--ink); font-stretch: 87.5%; font-variant-numeric: tabular-nums; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rk-card dd small { display: block; margin-top: .15rem; font-size: .72rem; font-weight: 500; color: var(--ink-2); font-stretch: 100%; white-space: normal; }
+.rk-card.is-bad dd b { color: var(--bad); }
+.rk-card dd .u { font-size: .6em; font-weight: 500; color: var(--ink-2); margin-left: .18em; font-stretch: 100%; }
+.rk-cards.c3 dd { font-size: 1.12rem; }
 @media (max-width: 900px) {
   .rk-row { grid-template-columns: 1fr; padding: 1.1rem 1.1rem 1.2rem 1rem; }
   .rk-figs { display: flex; flex-wrap: wrap; gap: 1rem 1.75rem; }
@@ -289,6 +301,7 @@ defaults = {
     "radio_sensor_mesa": 545.25,
     "sensor_distance_mm_mesa": 150.0,
     "modo_conversion_mesa": "Arc (R·θ) — recommended",
+    "vista_movil": "Conveyor",
 }
 MODOS_CONVERSION = ["Arc (R·θ) — recommended", "Chord (2R·sin(θ/2))"]
 # Re-assigning every value on each run keeps the parameters when switching sections
@@ -1365,6 +1378,15 @@ def pagina_mesa():
 # ==========================================
 # PAGE: CONVEYOR
 # ==========================================
+def sincronizar_perfil_b():
+    """When comparison is just turned on, Profile B starts as a copy of Profile A."""
+    ss = st.session_state
+    if ss.comparar and not ss._comparar_prev:
+        for k in ("speed_fast", "speed_slow", "accel", "decel", "sensor_distance", "ramp_stop", "mu"):
+            ss[f"{k}_b"] = ss[f"{k}_a"]
+    ss._comparar_prev = ss.comparar
+
+
 def sidebar_conveyor():
     sb = st.sidebar
     sb.header("Conveyor parameters")
@@ -1391,15 +1413,7 @@ def sidebar_conveyor():
     sb.checkbox("Compare with Profile B", key="comparar")
 
     ss = st.session_state
-    if ss.comparar and not ss._comparar_prev:
-        ss.speed_fast_b = ss.speed_fast_a
-        ss.speed_slow_b = ss.speed_slow_a
-        ss.accel_b = ss.accel_a
-        ss.decel_b = ss.decel_a
-        ss.sensor_distance_b = ss.sensor_distance_a
-        ss.ramp_stop_b = ss.ramp_stop_a
-        ss.mu_b = ss.mu_a
-    ss._comparar_prev = ss.comparar
+    sincronizar_perfil_b()
 
     if ss.comparar:
         sb.subheader("Profile B (comparison)")
@@ -1560,7 +1574,7 @@ def zona_paro(s, tau_rango=None):
                 pos_stop=det["pos_stop"])
 
 
-def figura_zona_paro(perfiles):
+def figura_zona_paro(perfiles, compacto=False):
     """Where the work piece carriers stop after the stop sensor triggers: overrun of each one and Δ B − A.
 
     Carrier positions only — the part's slip on the carrier is not drawn here (see the Slip tab).
@@ -1583,11 +1597,11 @@ def figura_zona_paro(perfiles):
             hovertemplate=f"{nombre} carrier: " + "%{y:+.2f} mm past the stop sensor<extra></extra>",
         ))
 
-    altura, m_top, m_bot = 450, 60, 110
+    altura, m_top, m_bot = (330, 34, 52) if compacto else (450, 60, 110)
     alto_px = altura - m_top - m_bot
     y_max = max([o for _, _, o in paros] + [1e-3])
     y_lo, y_hi = -0.45 * y_max, 1.35 * y_max
-    caja = (y_hi - y_lo) * 40.0 / alto_px      # label box height in data units
+    caja = (y_hi - y_lo) * (28.0 if compacto else 40.0) / alto_px      # label box height in data units
     x_fin = hi * 1000.0
 
     # Where each carrier stops: marker + label at the end of its line
@@ -1600,6 +1614,8 @@ def figura_zona_paro(perfiles):
         nombre, color, o = paros[i]
         fig.add_trace(go.Scatter(x=[x_fin], y=[o], mode="markers", showlegend=False, hoverinfo="skip",
                                  marker=dict(size=8, color=color, line=dict(color=PANEL, width=2))))
+        if compacto:
+            continue   # on the phone the stop positions are in the cards under the chart
         fig.add_annotation(x=x_fin, y=o, ax=x_fin * 1.03, ay=y_lab, xref="x", yref="y", axref="x", ayref="y",
                            text=f"{nombre} stops at <b>{pos_stop + o:.2f} mm</b>", showarrow=True, arrowhead=0,
                            arrowwidth=1, arrowcolor=color, xanchor="left", standoff=5,
@@ -1608,11 +1624,12 @@ def figura_zona_paro(perfiles):
 
     # Dimension arrows: overrun of each carrier, then Δ between A and B
     num = lambda v: f"{v:+.2f}".replace("-", "−")
-    cotas = [((1.2 + 0.55 * k) * t_c * 1000.0, 0.0, o, f"{nombre} overrun", color)
+    x0, paso = (1.0, 0.7) if compacto else (1.2, 0.55)
+    cotas = [((x0 + paso * k) * t_c * 1000.0, 0.0, o, nombre if compacto else f"{nombre} overrun", color)
              for k, (nombre, color, o) in enumerate(paros)]
     if len(paros) == 2:
         (_, _, oa), (_, _, ob) = paros
-        cotas.append(((1.2 + 0.55 * 2) * t_c * 1000.0, oa, ob, "Δ B − A", INK))
+        cotas.append(((x0 + paso * 2) * t_c * 1000.0, oa, ob, "Δ" if compacto else "Δ B − A", INK))
     y_cajas = []
     for x_c, y0, y1, titulo, color in cotas:
         largo = abs(y1 - y0)
@@ -1626,9 +1643,11 @@ def figura_zona_paro(perfiles):
             fig.add_annotation(x=x_c, y=y1, ax=x_c, ay=y0, xref="x", yref="y", axref="x", ayref="y",
                                text="", showarrow=True, arrowside="end+start", arrowhead=2, arrowsize=0.9,
                                arrowwidth=1.4, arrowcolor=color)
+        texto = (f"<b>{titulo} {num(y1 - y0)}</b>" if compacto else
+                 f"<span style='font-size:10px;color:{INK_2}'>{titulo}</span><br><b>{num(y1 - y0)} mm</b>")
         fig.add_annotation(
             x=x_c, y=y_caja, xref="x", yref="y", showarrow=False, align="center",
-            text=f"<span style='font-size:10px;color:{INK_2}'>{titulo}</span><br><b>{num(y1 - y0)} mm</b>",
+            text=texto,
             bgcolor="rgba(255,255,255,0.96)", bordercolor=color, borderwidth=1, borderpad=4,
             font=dict(family=FONT_UI, size=12, color=INK),
         )
@@ -1636,6 +1655,17 @@ def figura_zona_paro(perfiles):
 
     fig.add_hline(y=0, line_width=1.2, line_dash="dash", line_color=COL_SENSOR_STOP)
     fig.add_vline(x=0, line_width=1.2, line_dash="dot", line_color=MUTED)
+    if compacto:
+        # Phone: name the sensor line on the chart, keep the legend to the carriers, no zoom on touch
+        fig.add_annotation(x=x_fin * 1.04, y=0, xref="x", yref="y", text="stop sensor", showarrow=False,
+                           xanchor="right", yanchor="top", yshift=-2, font=dict(family=FONT_UI, size=10, color=INK_2))
+        fig.update_xaxes(title_text="ms after the stop sensor", range=[lo * 1000.0, x_fin * 1.04], fixedrange=True)
+        fig.update_yaxes(title_text="mm past the sensor", range=[y_lo, y_hi], fixedrange=True)
+        fig.update_layout(height=altura, dragmode=False, hovermode="x unified",
+                          margin=dict(t=m_top, b=m_bot, l=48, r=14),
+                          legend=dict(orientation="h", x=0, xanchor="left", y=1.02, yanchor="bottom",
+                                      font=dict(size=11)))
+        return fig
     entrada_leyenda(fig, f"Stop sensor · {pos_stop:.0f} mm", COL_SENSOR_STOP, "dash")
     entrada_leyenda(fig, "Stop sensor triggers (t = 0)", MUTED, "dot")
     fig.update_layout(title="Stop zone — where the work piece carriers stop")
@@ -2029,6 +2059,192 @@ def pagina_conveyor():
 
 
 # ==========================================
+# PAGE: PHONE — focused view for the shop floor
+# ==========================================
+PAGINAS = {}   # filled in by the navigation, used for links between pages
+
+
+def tarjetas(items, cols):
+    """Readout cards in a fixed grid (st.columns stacks into one column on phones; this does not).
+
+    items: dicts with label, value, and optionally unit, sub (small line), color (key swatch), estado ("ok"/"bad").
+    """
+    celdas = []
+    for it in items:
+        clave = f"<i style='--key:{it['color']}'></i>" if it.get("color") else ""
+        estado = f" is-{it['estado']}" if it.get("estado") else ""
+        sub = f"<small>{it['sub']}</small>" if it.get("sub") else ""
+        unidad = f"<span class='u'>{it['unit']}</span>" if it.get("unit") else ""
+        celdas.append(f"<dl class='rk-card{estado}'><dt>{clave}{it['label']}</dt>"
+                      f"<dd>{it['value']}{unidad}{sub}</dd></dl>")
+    clase = "rk-cards c3" if cols >= 3 else "rk-cards"
+    st.html(f"<div class='{clase}' style='--cols:{cols}'>{''.join(celdas)}</div>")
+
+
+def signo(v, fmt=".2f"):
+    return f"{v:+{fmt}}".replace("-", "−")
+
+
+def tarjeta_veredicto(etiqueta, desliza, peak, mu, color=None):
+    return dict(label=etiqueta,
+                value=f"<b>{'✕ Slips' if desliza else '✓ Stays'}</b>",
+                sub=f"peak {peak:.3f} G vs μ {mu:.2f}", color=color, estado="bad" if desliza else "ok")
+
+
+def parametros_conveyor_movil():
+    ss = st.session_state
+    resumen = f"A: slow {ss.speed_slow_a:.0f} mm/s, stop {ss.ramp_stop_a:.0f} mm/s²"
+    if ss.comparar:
+        resumen += f" · B: slow {ss.speed_slow_b:.0f} mm/s, stop {ss.ramp_stop_b:.0f} mm/s²"
+    with st.expander(f"Parameters — {resumen}"):
+        st.number_input("Total Conveyor Length (mm)", step=100.0, key="conveyor_length")
+        st.checkbox("Compare with Profile B", key="comparar")
+        sincronizar_perfil_b()
+        perfiles = ["a", "b"] if ss.comparar else ["a"]
+        pestanas = st.tabs([f"Profile {k.upper()}" for k in perfiles]) if ss.comparar else [st.container()]
+        for k, contenedor in zip(perfiles, pestanas):
+            K = k.upper()
+            with contenedor:
+                st.number_input(f"SPEED_AUTO_FAST {K} (mm/s)", step=10.0, key=f"speed_fast_{k}")
+                st.number_input(f"SPEED_AUTO_SLOW {K} (mm/s)", step=10.0, key=f"speed_slow_{k}")
+                st.number_input(f"RAMP_ACCEL {K} (mm/s²)", step=50.0, key=f"accel_{k}")
+                st.number_input(f"RAMP_DECEL {K} (mm/s²)", step=50.0, key=f"decel_{k}")
+                st.number_input(f"Slowdown Sensor Distance {K} (mm)", step=25.0, key=f"sensor_distance_{k}")
+                st.number_input(f"RAMP_STOP {K} (mm/s²)", step=100.0, min_value=0.0, key=f"ramp_stop_{k}",
+                                help="Commanded stop deceleration (not a time). 0 = mechanical maximum.")
+                st.number_input(f"Friction Coefficient μ {K}", step=0.01, min_value=0.01, max_value=1.0,
+                                key=f"mu_{k}")
+
+
+def movil_conveyor():
+    ss = st.session_state
+    parametros_conveyor_movil()
+    comparar = ss.comparar
+    A = simular_conveyor("a")
+    B = simular_conveyor("b") if comparar else None
+    perfiles = [("A", A, COL_A, "solid")] + ([("B", B, COL_B, "dashdot")] if comparar else [])
+
+    for nombre, s, _, _ in perfiles:
+        d = s["det"]
+        if d["insufficient_distance"]:
+            aviso("warning", f"**{nombre}:** RAMP_DECEL needs {d['dist_needed_decel']:.1f} mm but the slowdown "
+                             f"sensor distance is {ss[f'sensor_distance_{nombre.lower()}']:.1f} mm.")
+        if d["mechanically_capped"]:
+            aviso("info", f"**{nombre}:** RAMP_STOP limited to {d['a_stop_conveyor']:.0f} mm/s² "
+                          f"({T_MIN_MECANICO_MS:.0f} ms mechanical floor).")
+
+    tarjetas([tarjeta_veredicto(f"{nombre} · part on the carrier" if comparar else "Part on the carrier",
+                                s["det"]["se_desliza_alguna_fase"],
+                                s["det"]["g_max_fase"], s["mu"], color if comparar else None)
+              for nombre, s, color, _ in perfiles], cols=len(perfiles))
+
+    st.subheader("Where the carriers stop", anchor=False)
+    fig = figura_zona_paro(perfiles, compacto=True)
+    if fig is not None:
+        st.plotly_chart(fig, theme=None, config={"displayModeBar": False, "scrollZoom": False})
+
+    celdas = [dict(label=f"Overrun {nombre}", value=signo(s['overrun']), unit="mm",
+                   sub=f"stops at {s['pos'][-1]:.2f}", color=color) for nombre, s, color, _ in perfiles]
+    if not comparar:
+        celdas.append(dict(label="Stop time", value=f"{A['overrun_time'] * 1000:.0f}", unit="ms",
+                           sub="after the stop sensor"))
+    if comparar:
+        d_ab = B["overrun"] - A["overrun"]
+        celdas.append(dict(label="Δ B − A", value=signo(d_ab), unit="mm",
+                           sub="same stop" if abs(d_ab) < 0.005 else ("B further" if d_ab > 0 else "B shorter")))
+    tarjetas(celdas, cols=3 if comparar else 2)
+
+    st.subheader("Sensor correction", anchor=False)
+    st.caption("Move the sensors back by the overrun so the carrier stops where the stop sensor is today.")
+    for nombre, s, color, _ in perfiles:
+        k = nombre.lower()
+        c = correccion_sensores(s, ss[f"sensor_distance_{k}"])
+        if c is None:
+            continue
+        pref = f"{nombre} · " if comparar else ""
+        tarjetas([
+            dict(label=f"{pref}Stop sensor to", value=f"{c['stop_nuevo']:.2f}", unit="mm", sub=f"{signo(-c['delta'])} mm",
+                 color=color if comparar else None),
+            dict(label=f"{pref}Slowdown sensor to", value=f"{c['red_nuevo']:.2f}", unit="mm", sub=f"{signo(-c['delta'])} mm",
+                 color=color if comparar else None),
+        ], cols=2)
+        if c["creep"] - c["delta"] >= 1.0:
+            st.caption(f"{pref}Moving only the stop sensor is enough (creep stretch {c['creep']:.1f} mm).")
+        elif c["creep"] >= 0:
+            st.caption(f"{pref}Move both sensors (creep stretch only {c['creep']:.1f} mm).")
+
+    if PAGINAS.get("conveyor") is not None:
+        st.page_link(PAGINAS["conveyor"], label="Full conveyor analysis", icon=":material/open_in_new:")
+
+
+def parametros_mesa_movil():
+    ss = st.session_state
+    resumen = f"slow {ss.speed_slow_mesa:.0f} °/s, stop {ss.ramp_stop_mesa:.0f} °/s², {ss.angle_total_mesa:.0f}°"
+    with st.expander(f"Parameters — {resumen}"):
+        st.number_input("SPEED_AUTO_FAST TABLE (°/s)", step=5.0, key="speed_fast_mesa")
+        st.number_input("SPEED_AUTO_SLOW TABLE (°/s)", step=1.0, key="speed_slow_mesa")
+        st.number_input("RAMP_ACCEL TABLE (°/s²)", step=10.0, key="accel_mesa")
+        st.number_input("RAMP_DECEL TABLE (°/s²)", step=10.0, key="decel_mesa")
+        st.number_input("RAMP_STOP TABLE (°/s²)", step=25.0, min_value=0.0, key="ramp_stop_mesa",
+                        help="Commanded stop deceleration (not a time). 0 = mechanical maximum.")
+        st.number_input("Total Rotation Angle TABLE (°)", step=15.0, key="angle_total_mesa")
+        st.number_input("Sensor Rail Radius TABLE (mm)", step=5.0, min_value=1.0, key="radio_sensor_mesa")
+        st.radio("Angle ↔ mm conversion", MODOS_CONVERSION, key="modo_conversion_mesa", horizontal=True)
+        st.number_input("Slowdown Sensor Distance TABLE (mm)", step=5.0, min_value=0.0, key="sensor_distance_mm_mesa")
+        st.number_input("Total Part Length TABLE (mm)", step=10.0, min_value=1.0, key="pieza_longitud_mesa")
+        st.number_input("Friction Coefficient μ TABLE", step=0.01, min_value=0.01, max_value=1.0, key="mu_mesa")
+
+
+def movil_mesa():
+    ss = st.session_state
+    parametros_mesa_movil()
+    m = simular_mesa()
+    d = m["det"]
+    R = ss.radio_sensor_mesa
+    modo = modo_conversion_key()
+
+    if d["insufficient_angle"]:
+        aviso("warning", f"RAMP_DECEL TABLE needs {d['angle_needed_decel']:.1f}° but the slowdown sensor distance "
+                         f"is only {m['sensor_angle']:.1f}°.")
+    if d["mechanically_capped"]:
+        aviso("info", f"RAMP_STOP TABLE limited to {d['alpha_stop']:.0f} °/s² "
+                      f"({T_MIN_MECANICO_MS:.0f} ms mechanical floor).")
+
+    tarjetas([tarjeta_veredicto("Part on the table", d["se_desliza_resultante"], d["g_res_max"], m["mu"])], cols=1)
+
+    st.subheader("Where the table stops", anchor=False)
+    overrun_riel = angle_to_mm(m["ang_overrun"], R, modo)
+    tarjetas([
+        dict(label="Angular overrun", value=f"{signo(m['ang_overrun'], '.3f')}°"),
+        dict(label="Rail overrun", value=signo(overrun_riel), unit="mm", sub=f"R = {R:.0f} mm"),
+        dict(label="Stop time", value=f"{m['overrun_time'] * 1000:.0f}", unit="ms"),
+    ], cols=3)
+
+    st.subheader("Sensor correction", anchor=False)
+    st.caption("Move the stop sensor back along the rail by the overrun so the table stops where it would "
+               "with an instant stop.")
+    actual = angle_to_mm(ss.angle_total_mesa, R, modo)
+    nuevo = angle_to_mm(ss.angle_total_mesa - m["ang_overrun"], R, modo)
+    tarjetas([
+        dict(label="Stop sensor now", value=f"{actual:.2f}", unit="mm", sub="along the rail"),
+        dict(label="Move stop sensor to", value=f"{nuevo:.2f}", unit="mm", sub=f"{signo(nuevo - actual)} mm"),
+    ], cols=2)
+
+    if PAGINAS.get("turntable") is not None:
+        st.page_link(PAGINAS["turntable"], label="Full turntable analysis", icon=":material/open_in_new:")
+
+
+def pagina_telefono():
+    st.title("Stop check", anchor=False)
+    vista = st.radio("Section", ["Conveyor", "Turntable"], key="vista_movil", horizontal=True,
+                     label_visibility="collapsed")
+    if vista == "Turntable":
+        movil_mesa()
+    else:
+        movil_conveyor()
+
+
+# ==========================================
 # MATHEMATICAL & PHYSICAL BACKGROUND
 # ==========================================
 def fundamentos_comunes(unidad_a, simbolo):
@@ -2159,11 +2375,11 @@ def fundamentos_mesa():
 # ==========================================
 # NAVIGATION: TWO SECTIONS
 # ==========================================
+PAGINAS["turntable"] = st.Page(pagina_mesa, title="Turntable", icon=":material/360:", url_path="turntable", default=True)
+PAGINAS["conveyor"] = st.Page(pagina_conveyor, title="Conveyor", icon=":material/conveyor_belt:", url_path="conveyor")
+PAGINAS["phone"] = st.Page(pagina_telefono, title="Phone", icon=":material/smartphone:", url_path="phone")
 pagina = st.navigation(
-    [
-        st.Page(pagina_mesa, title="Turntable", icon=":material/360:", url_path="turntable", default=True),
-        st.Page(pagina_conveyor, title="Conveyor", icon=":material/conveyor_belt:", url_path="conveyor"),
-    ],
+    [PAGINAS["turntable"], PAGINAS["conveyor"], PAGINAS["phone"]],
     position="top",
 )
 pagina.run()
