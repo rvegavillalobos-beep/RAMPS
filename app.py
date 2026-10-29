@@ -1528,6 +1528,167 @@ def tabla_fases_conveyor(s, perfil=None):
     return filas
 
 
+def zona_paro(s, tau_rango=None):
+    """Conveyor and part position around the stop sensor, on a time axis relative to the trigger.
+
+    The conveyor comes from the simulation. The part adds the slip that builds up while it brakes at
+    μ·g instead of following the conveyor — the same model as the slip metrics, so its curve ends
+    exactly at the reported final part position.
+    """
+    det = s["det"]
+    if s["t_stop"] <= 0:
+        return None
+    a_s = det["a_stop_conveyor"]
+    v0 = float(np.sqrt(max(2.0 * a_s * det["dist_freno_conveyor"], 0.0)))  # = SPEED_AUTO_SLOW
+    a_p = det["a_max_pieza"] if s["desliza"] else a_s
+    t_conv = max(det["t_fully_stopped"] - s["t_stop"], 0.0)
+    t_part = v0 / a_p if (s["desliza"] and a_p > 0) else t_conv
+    t_fin = max(t_conv, t_part, 0.005)
+    # Shared time window when several profiles are drawn together (curves hold their rest value)
+    lo, hi = tau_rango if tau_rango else (-0.6 * t_fin, 1.15 * t_fin)
+    tau = np.linspace(lo, hi, 600)
+    conv = np.interp(s["t_stop"] + tau, s["t"], s["pos"]) - det["pos_stop"]
+
+    def recorrido(a, tt):
+        tt = np.clip(tt, 0.0, v0 / a if a > 0 else 0.0)
+        return v0 * tt - 0.5 * a * tt ** 2
+
+    slip = (recorrido(a_p, tau) - recorrido(a_s, tau)) if s["desliza"] else np.zeros_like(tau)
+    conv_fin = float(s["pos"][-1] - det["pos_stop"])
+    return dict(tau_ms=tau * 1000.0, conv=conv, part=conv + slip, t_fin=t_fin, t_conv_ms=t_conv * 1000.0,
+                t_part_ms=t_part * 1000.0, conv_fin=conv_fin, part_fin=conv_fin + s["d_desliza"],
+                pos_stop=det["pos_stop"])
+
+
+def figura_zona_paro(perfiles):
+    """Where the conveyor and the part come to rest after the stop sensor triggers."""
+    fig = go.Figure()
+    finales = []   # (y, text, color) of each resting point
+    y_lo, y_hi = 0.0, 0.0
+    pos_stop = None
+    previos = [zona_paro(s) for _, s, _, _ in perfiles]
+    t_fin = max([z["t_fin"] for z in previos if z is not None] or [0.005])
+    x_fin = 1.15 * t_fin * 1000.0
+    for (nombre, s, color, dash), z0 in zip(perfiles, previos):
+        if z0 is None:
+            continue
+        z = zona_paro(s, tau_rango=(-0.35 * t_fin, 1.15 * t_fin))
+        pos_stop = z["pos_stop"]
+        y_lo = min(y_lo, float(np.min(z["conv"])))
+        y_hi = max(y_hi, float(np.max(z["part"])))
+        nombre_conv = f"{nombre} · conveyor" if s["desliza"] else f"{nombre} · conveyor = part (no slip)"
+        fig.add_trace(go.Scatter(
+            x=z["tau_ms"], y=z["conv"], mode="lines", name=nombre_conv,
+            line=dict(color=color, width=2, dash=dash),
+            hovertemplate=f"{nombre} conveyor: " + "%{y:+.2f} mm<extra></extra>",
+        ))
+        if s["desliza"]:
+            fig.add_trace(go.Scatter(
+                x=z["tau_ms"], y=z["part"], mode="lines", name=f"{nombre} · part (slides on the conveyor)",
+                line=dict(color=color, width=2, dash="dot"),
+                hovertemplate=f"{nombre} part: " + "%{y:+.2f} mm<extra></extra>",
+            ))
+            finales.append((z["conv_fin"], f"{nombre} conveyor · {pos_stop + z['conv_fin']:.2f} mm "
+                                           f"({z['conv_fin']:+.2f})", color))
+            finales.append((z["part_fin"], f"<b>{nombre} part · {pos_stop + z['part_fin']:.2f} mm</b> "
+                                           f"({z['part_fin']:+.2f})", color))
+        else:
+            finales.append((z["part_fin"], f"<b>{nombre} conveyor = part · {pos_stop + z['part_fin']:.2f} mm</b> "
+                                           f"({z['part_fin']:+.2f})", color))
+    if pos_stop is None:
+        return None
+
+    altura, m_top, m_bot = 470, 60, 120
+    # Focus on where things come to rest: the approach before the sensor may leave through the bottom
+    y_top = max(y_hi, 1e-3)
+    y_lo, y_hi = max(y_lo, -0.55 * y_top) - 0.08 * y_top, y_top * 1.22
+    # Resting-point labels in a column to the right of the curves, spread so they never overlap
+    sep = (y_hi - y_lo) * 20.0 / (altura - m_top - m_bot)
+    orden = sorted(range(len(finales)), key=lambda i: finales[i][0])
+    ys = [finales[i][0] for i in orden]
+    for i in range(1, len(ys)):
+        ys[i] = max(ys[i], ys[i - 1] + sep)
+    x_lab = x_fin * 1.05
+    for i, y_lab in zip(orden, ys):
+        y_pt, texto, color = finales[i]
+        fig.add_trace(go.Scatter(x=[x_fin], y=[y_pt], mode="markers", showlegend=False, hoverinfo="skip",
+                                 marker=dict(size=8, color=color, line=dict(color=PANEL, width=2))))
+        fig.add_annotation(x=x_fin, y=y_pt, ax=x_lab, ay=y_lab, xref="x", yref="y", axref="x", ayref="y",
+                           text=texto, showarrow=True, arrowhead=0, arrowwidth=1, arrowcolor=color,
+                           xanchor="left", standoff=5, font=dict(family=FONT_UI, size=11, color=INK))
+    y_hi = max(y_hi, ys[-1] + sep)
+
+    fig.add_hline(y=0, line_width=1.2, line_dash="dash", line_color=COL_SENSOR_STOP)
+    fig.add_vline(x=0, line_width=1.2, line_dash="dot", line_color=MUTED)
+    entrada_leyenda(fig, f"Stop sensor position · {pos_stop:.0f} mm", COL_SENSOR_STOP, "dash")
+    entrada_leyenda(fig, "Stop sensor triggers (t = 0)", MUTED, "dot")
+    fig.update_layout(title="Stop zone — where the conveyor and the part come to rest")
+    fig.update_xaxes(title_text="Time after the stop sensor triggers (ms)",
+                     range=[float(-0.35 * x_fin / 1.15), x_fin * 2.05])
+    fig.update_yaxes(title_text="Distance past the stop sensor (mm)", range=[y_lo, y_hi])
+    leyenda_abajo(fig, altura, legend_y=-0.2)
+    fig.update_layout(margin=dict(t=m_top, b=m_bot))
+    return fig
+
+
+def texto_zona_paro(s, nombre):
+    z = zona_paro(s)
+    if z is None:
+        return f"**{nombre}:** the stop sensor is never reached in the simulated 30 s."
+    final = z["pos_stop"] + z["part_fin"]
+    if s["desliza"]:
+        return (f"**{nombre}:** the conveyor stops {z['conv_fin']:.2f} mm past the sensor in {z['t_conv_ms']:.0f} ms. "
+                f"That stop is {s['g_conv']:.3f} G, above μ = {s['mu']:.2f}, so the part keeps sliding "
+                f"**{s['d_desliza']:.2f} mm** for {z['t_part_ms']:.0f} ms and rests at **{final:.2f} mm**.")
+    return (f"**{nombre}:** conveyor and part stop together {z['conv_fin']:.2f} mm past the sensor in "
+            f"{z['t_conv_ms']:.0f} ms ({s['g_conv']:.3f} G ≤ μ = {s['mu']:.2f}) and rest at **{final:.2f} mm**.")
+
+
+def clave_perfil(nombre, color):
+    """Small colored key + profile name, so each row says which profile it belongs to."""
+    st.html(f"<div class='rk-profile'><i style='--key:{color}'></i>{nombre}</div>")
+
+
+def tablas_comparacion(A, B, ss):
+    """Every key value of both profiles side by side, with B − A."""
+    def fila(nombre, va, vb, fmt, unidad="", delta=True):
+        d = f"{vb - va:+{fmt}}{unidad}".replace("-", "−") if delta else "—"
+        return {"": nombre, "Profile A": f"{va:{fmt}}{unidad}", "Profile B": f"{vb:{fmt}}{unidad}", "B − A": d}
+
+    da, db = A["det"], B["det"]
+    ajustes = [
+        fila("SPEED_AUTO_FAST", ss.speed_fast_a, ss.speed_fast_b, ".1f", " mm/s"),
+        fila("SPEED_AUTO_SLOW", ss.speed_slow_a, ss.speed_slow_b, ".1f", " mm/s"),
+        fila("RAMP_ACCEL", ss.accel_a, ss.accel_b, ".0f", " mm/s²"),
+        fila("RAMP_DECEL", ss.decel_a, ss.decel_b, ".0f", " mm/s²"),
+        fila("Slowdown sensor distance", ss.sensor_distance_a, ss.sensor_distance_b, ".1f", " mm"),
+        fila("RAMP_STOP (configured)", ss.ramp_stop_a, ss.ramp_stop_b, ".0f", " mm/s²"),
+        fila("Stop deceleration actually applied", da["a_stop_conveyor"], db["a_stop_conveyor"], ".0f", " mm/s²"),
+        fila("Friction coefficient μ", A["mu"], B["mu"], ".2f"),
+    ]
+    acel = [
+        fila("ACCEL_FAST (start-up)", da["g_accel"], db["g_accel"], ".3f", " G"),
+        fila("DECEL_TO_SLOW (braking to creep)", da["g_decel"], db["g_decel"], ".3f", " G"),
+        fila("DECEL_TO_STOP (final stop)", A["g_conv"], B["g_conv"], ".3f", " G"),
+        {"": "Most critical phase", "Profile A": da["peor_fase_label"].split(" (")[0],
+         "Profile B": db["peor_fase_label"].split(" (")[0], "B − A": "—"},
+        {"": "Safety factor (μ / peak)", "Profile A": fmt_fs(da["factor_seguridad_fase"]),
+         "Profile B": fmt_fs(db["factor_seguridad_fase"]), "B − A": "—"},
+        {"": "Part slips?", "Profile A": estado_txt(da["se_desliza_alguna_fase"]),
+         "Profile B": estado_txt(db["se_desliza_alguna_fase"]), "B − A": "—"},
+    ]
+    paro = [
+        fila("Stop sensor triggers at", A["t_stop"], B["t_stop"], ".3f", " s"),
+        fila("Stop duration (overrun time)", A["overrun_time"] * 1000, B["overrun_time"] * 1000, ".0f", " ms"),
+        fila("Conveyor overrun past the stop sensor", A["overrun"], B["overrun"], ".2f", " mm"),
+        fila("Conveyor rests at", A["pos"][-1], B["pos"][-1], ".2f", " mm"),
+        fila("Part slip on the conveyor", A["d_desliza"], B["d_desliza"], ".2f", " mm"),
+        fila("Final part position", A["pos"][-1] + A["d_desliza"], B["pos"][-1] + B["d_desliza"], ".2f", " mm"),
+        fila("Total motion time", A["t"][-1], B["t"][-1], ".2f", " s"),
+    ]
+    return ajustes, acel, paro
+
+
 def figura_fases_conveyor(a, b=None):
     etiquetas = ["Start-up<br>ACCEL_FAST", "Braking to creep<br>DECEL_TO_SLOW", "Final stop<br>DECEL_TO_STOP"]
 
@@ -1581,10 +1742,13 @@ def pagina_conveyor():
     def fila_veredicto(s, perfil, color, ref=None):
         d = s["det"]
         pos_final = s["pos"][-1] + s["d_desliza"]
-        nota_t = nota_p = ""
+        nota_t = ""
+        # Say when the final position includes slip, so it is not read as the conveyor stop
+        notas_p = [f"incl. {s['d_desliza']:.2f} mm slip" if s["desliza"] else "no slip"]
         if ref is not None:
             nota_t = f"{s['t'][-1] - ref['t'][-1]:+.2f} s vs A"
-            nota_p = f"{pos_final - (ref['pos'][-1] + ref['d_desliza']):+.2f} mm vs A"
+            notas_p.append(f"{pos_final - (ref['pos'][-1] + ref['d_desliza']):+.2f} mm vs A")
+        nota_p = "<br>".join(notas_p)
         return dict(
             slip=d['se_desliza_alguna_fase'], peak=d['g_max_fase'], mu=s["mu"], where=d['peor_fase_label'],
             perfil=perfil if comparar else None, color=color,
@@ -1638,12 +1802,51 @@ def pagina_conveyor():
             "is 0 G. Bands: Profile A PLC phases. Hover over the velocity curve to see the position x."
         )
 
-        st.subheader("Positioning & cycle time (Profile A)")
-        col5, col6, col7, col8 = st.columns(4)
-        col5.metric("Conveyor Overrun", f"{A['overrun']:.2f} mm")
-        col6.metric("Overrun Time", f"{A['overrun_time']*1000:.0f} ms")
-        col7.metric("Final Part Position", f"{(A['pos'][-1] + A['d_desliza']):.2f} mm")
-        col8.metric("Total Motion Time", f"{A['t'][-1]:.2f} s")
+        perfiles_zona = [("A", A, COL_A, "solid")] + ([("B", B, COL_B, "dashdot")] if comparar else [])
+        fig_zona = figura_zona_paro(perfiles_zona)
+        if fig_zona is not None:
+            st.plotly_chart(fig_zona, theme=None)
+        st.caption(
+            "Zoom on the last millimeters. Distance from the stop sensor to where the part rests ≈ "
+            "SPEED_AUTO_SLOW² / (2 × the deceleration the part actually follows): the conveyor's stop "
+            "deceleration, or μ·g if the part slides. A slower creep speed can therefore stop shorter "
+            "even with a softer RAMP_STOP."
+        )
+        for nombre, s, _, _ in perfiles_zona:
+            st.markdown(texto_zona_paro(s, f"Profile {nombre}" if comparar else "Profile A"))
+
+        st.subheader("Positioning & cycle time")
+
+        def fila_posicion(s, nombre, color, ref=None):
+            if comparar:
+                clave_perfil(f"Profile {nombre}", color)
+
+            def d(v, v_ref, fmt, unidad):
+                return None if ref is None else f"{v - v_ref:+{fmt}} {unidad} vs A"
+
+            pf = s["pos"][-1] + s["d_desliza"]
+            pf_ref = None if ref is None else ref["pos"][-1] + ref["d_desliza"]
+            c = st.columns(6)
+            c[0].metric("Conveyor Overrun", f"{s['overrun']:.2f} mm",
+                        delta=d(s["overrun"], ref and ref["overrun"], ".2f", "mm"), delta_color="inverse",
+                        help="How far the conveyor travels past the stop sensor while it brakes.")
+            c[1].metric("Overrun Time", f"{s['overrun_time']*1000:.0f} ms",
+                        delta=d(s["overrun_time"] * 1000, ref and ref["overrun_time"] * 1000, ".0f", "ms"),
+                        delta_color="inverse")
+            c[2].metric("Conveyor Rests At", f"{s['pos'][-1]:.2f} mm",
+                        delta=d(s["pos"][-1], ref and ref["pos"][-1], ".2f", "mm"), delta_color="off")
+            c[3].metric("Part Slip", f"{s['d_desliza']:.2f} mm",
+                        delta=d(s["d_desliza"], ref and ref["d_desliza"], ".2f", "mm"), delta_color="inverse",
+                        help="Extra distance the part slides on the conveyor because the stop exceeds μ.")
+            c[4].metric("Final Part Position", f"{pf:.2f} mm",
+                        delta=d(pf, pf_ref, ".2f", "mm"), delta_color="off",
+                        help="Where the conveyor rests plus the part slip.")
+            c[5].metric("Total Motion Time", f"{s['t'][-1]:.2f} s",
+                        delta=d(s["t"][-1], ref and ref["t"][-1], ".2f", "s"), delta_color="inverse")
+
+        fila_posicion(A, "A", COL_A)
+        if comparar:
+            fila_posicion(B, "B", COL_B, ref=A)
 
         st.subheader("Cycle phases")
         filas = tabla_fases_conveyor(A, "A" if comparar else None)
@@ -1655,95 +1858,109 @@ def pagina_conveyor():
     with tab_slip:
         st.plotly_chart(figura_fases_conveyor(A, B), theme=None)
 
-        st.subheader("Acceleration in G per state transition (Profile A)")
+        perfiles_slip = [("A", "a", A, COL_A)] + ([("B", "b", B, COL_B)] if comparar else [])
+
+        st.subheader("Acceleration in G per state transition")
         st.caption(
             "The linear conveyor has three speed transitions where the part experiences acceleration: "
             "start-up (ACCEL_FAST), braking to creep speed (DECEL_TO_SLOW), and the final stop "
             "(DECEL_TO_STOP). Each one is checked against μ separately."
         )
-        fa1, fa2, fa3 = st.columns(3)
-        fa1.metric("ACCEL_FAST (start-up)", f"{det_a['g_accel']:.3f} G",
-                   delta=delta_mu(det_a['g_accel'], ss.mu_a), delta_color="inverse")
-        fa2.metric("DECEL_TO_SLOW (braking to creep)", f"{det_a['g_decel']:.3f} G",
-                   delta=delta_mu(det_a['g_decel'], ss.mu_a), delta_color="inverse")
-        fa3.metric("DECEL_TO_STOP (final stop)", f"{A['g_conv']:.3f} G",
-                   delta=delta_mu(A['g_conv'], ss.mu_a), delta_color="inverse")
+        for nombre, k, s, color in perfiles_slip:
+            d = s["det"]
+            mu = s["mu"]
+            if comparar:
+                clave_perfil(f"Profile {nombre}", color)
+            fa1, fa2, fa3, fb1, fb2 = st.columns([1, 1, 1, 1, 1])
+            fa1.metric("ACCEL_FAST (start-up)", f"{d['g_accel']:.3f} G",
+                       delta=delta_mu(d['g_accel'], mu), delta_color="inverse")
+            fa2.metric("DECEL_TO_SLOW (braking to creep)", f"{d['g_decel']:.3f} G",
+                       delta=delta_mu(d['g_decel'], mu), delta_color="inverse")
+            fa3.metric("DECEL_TO_STOP (final stop)", f"{s['g_conv']:.3f} G",
+                       delta=delta_mu(s['g_conv'], mu), delta_color="inverse")
+            fb1.metric("Most Critical Phase", d['peor_fase_label'].split(" (")[0], help=d['peor_fase_label'])
+            fb2.metric("Safety Factor (most critical)", fmt_fs(d['factor_seguridad_fase']))
 
-        fb1, fb2 = st.columns(2)
-        fb1.metric("Most Critical Phase", det_a['peor_fase_label'].split(" (")[0], help=det_a['peor_fase_label'])
-        fb2.metric("Safety Factor of the Most Critical Phase", fmt_fs(det_a['factor_seguridad_fase']))
-
-        if det_a['se_desliza_alguna_fase'] and not det_a['se_desliza_stop_fase']:
-            aviso("warning",
-                f"**Difference detected:** the final stop is STABLE, but **{det_a['peor_fase_label']}** "
-                f"reaches {det_a['g_max_fase']:.3f} G, which **exceeds** μ ({ss.mu_a:.2f} G)."
-            )
-        elif det_a['se_desliza_alguna_fase']:
-            aviso("error", f"At least one phase exceeds μ — the most critical is **{det_a['peor_fase_label']}**.")
-        else:
-            aviso("success", "All three speed transitions are within the friction limit.")
+            prefijo = f"**Profile {nombre}** — " if comparar else ""
+            if d['se_desliza_alguna_fase'] and not d['se_desliza_stop_fase']:
+                aviso("warning",
+                    f"{prefijo}**Difference detected:** the final stop is STABLE, but **{d['peor_fase_label']}** "
+                    f"reaches {d['g_max_fase']:.3f} G, which **exceeds** μ ({mu:.2f} G)."
+                )
+            elif d['se_desliza_alguna_fase']:
+                aviso("error", f"{prefijo}At least one phase exceeds μ — the most critical is **{d['peor_fase_label']}**.")
+            else:
+                aviso("success", f"{prefijo}All three speed transitions are within the friction limit.")
 
         st.divider()
-        st.subheader("Inertia & part slip at the final stop (Profile A)")
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Conveyor Deceleration", f"{A['g_conv']:.3f} G")
-        col2.metric("Friction Limit (μ)", f"{ss.mu_a:.2f} G")
-        col3.metric("Load Stability", estado_txt(A['desliza']),
-                    delta=delta_mu(A['g_conv'], ss.mu_a), delta_color="inverse")
-        col4.metric("Relative Part Slip",
-                    f"{A['d_desliza']:.3f} mm ({A['d_desliza']*1000:.0f} µm)" if A['desliza'] else "0.000 mm")
+        st.subheader("Inertia & part slip at the final stop")
+        for nombre, k, s, color in perfiles_slip:
+            d = s["det"]
+            mu = s["mu"]
+            if comparar:
+                clave_perfil(f"Profile {nombre}", color)
+            col1, col2, col3, col4, col5, col6 = st.columns(6)
+            col1.metric("Conveyor Deceleration", f"{s['g_conv']:.3f} G")
+            col2.metric("Friction Limit (μ)", f"{mu:.2f} G")
+            col3.metric("Load Stability", estado_txt(s['desliza']),
+                        delta=delta_mu(s['g_conv'], mu), delta_color="inverse")
+            col4.metric("Relative Part Slip",
+                        f"{s['d_desliza']:.3f} mm ({s['d_desliza']*1000:.0f} µm)" if s['desliza'] else "0.000 mm")
+            col5.metric("Safety Factor (μ / g_conv)", fmt_fs(d['factor_seguridad']))
+            col6.metric("Minimum μ to NOT slip", f"{d['mu_minimo_requerido']:.3f}")
 
-        col_s1, col_s2 = st.columns(2)
-        col_s1.metric("Safety Factor (μ / g_conv)", fmt_fs(det_a['factor_seguridad']))
-        col_s2.metric("Minimum μ required to NOT slip", f"{det_a['mu_minimo_requerido']:.3f}")
+        for nombre, k, s, color in perfiles_slip:
+            d = s["det"]
+            mu = s["mu"]
+            v_slow = ss[f"speed_slow_{k}"]
+            ramp_stop = ss[f"ramp_stop_{k}"]
+            titulo = (f"View step-by-step calculation breakdown (Profile {nombre})" if s['desliza']
+                      else f"View stability & deceleration math (Profile {nombre})")
+            with st.expander(titulo):
+                st.markdown("### Live Calculation Breakdown (Simulated Values)")
 
-        titulo = ("View step-by-step calculation breakdown (Profile A)" if A['desliza']
-                  else "View stability & deceleration math (Profile A)")
-        with st.expander(titulo):
-            st.markdown("### Live Calculation Breakdown (Simulated Values)")
-
-            st.markdown("**Step 1: Mechanical Maximum Deceleration (Floor Limit)**")
-            st.latex(L(
-                f"a_{{~text{{mech,max}}}} = ~frac{{v_{{~text{{slow}}}}}}{{20~,~text{{ms}}}} = "
-                f"~frac{{{ss.speed_slow_a:.1f}~,~text{{mm/s}}}}{{0.020~,~text{{s}}}} = "
-                f"~mathbf{{{det_a['a_mechanical_max']:.1f}~,~text{{mm/s}}^2}}"
-            ))
-
-            st.markdown("**Step 2: Effective Stop Deceleration (RAMP_STOP capped by the mechanical limit)**")
-            st.latex(L(
-                f"a_{{~text{{stop}}}} = ~min({ss.ramp_stop_a:.1f}~,~text{{mm/s}}^2, "
-                f"{det_a['a_mechanical_max']:.1f}~,~text{{mm/s}}^2) = ~mathbf{{{det_a['a_stop_conveyor']:.1f}~,~text{{mm/s}}^2}} "
-                f"~quad (t~approx{det_a['ramp_stop_real_ms']:.1f}~,~text{{ms}})"
-            ))
-            st.latex(L(
-                f"g_{{~text{{conv}}}} = ~frac{{{det_a['a_stop_conveyor']:.1f}~,~text{{mm/s}}^2}}"
-                f"{{9810~,~text{{mm/s}}^2}} = ~mathbf{{{A['g_conv']:.3f}~,~text{{G}}}}"
-            ))
-
-            st.markdown("**Step 3: Maximum Allowable Friction Acceleration**")
-            st.latex(L(
-                f"a_{{~text{{max~_piece}}}} = ~mu ~cdot g = {ss.mu_a:.2f} ~cdot 9810~,~text{{mm/s}}^2 "
-                f"= {det_a['a_max_pieza']:.2f}~,~text{{mm/s}}^2 ~quad (~mu = ~mathbf{{{ss.mu_a:.2f}~,~text{{G}}}})"
-            ))
-
-            st.markdown("**Step 4: Slip Decision Criterion**")
-            if A['desliza']:
-                aviso("error", f"**SLIP DETECTED:** g_conv ({A['g_conv']:.3f} G) > μ ({ss.mu_a:.2f} G).")
-                st.markdown("**Step 5: Relative Slip Distance (Δd)**")
+                st.markdown("**Step 1: Mechanical Maximum Deceleration (Floor Limit)**")
                 st.latex(L(
-                    f"d_{{~text{{piece}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{max~_piece}}}}}} = "
-                    f"{det_a['dist_freno_pieza']:.3f}~,~text{{mm}}"
+                    f"a_{{~text{{mech,max}}}} = ~frac{{v_{{~text{{slow}}}}}}{{20~,~text{{ms}}}} = "
+                    f"~frac{{{v_slow:.1f}~,~text{{mm/s}}}}{{0.020~,~text{{s}}}} = "
+                    f"~mathbf{{{d['a_mechanical_max']:.1f}~,~text{{mm/s}}^2}}"
+                ))
+
+                st.markdown("**Step 2: Effective Stop Deceleration (RAMP_STOP capped by the mechanical limit)**")
+                st.latex(L(
+                    f"a_{{~text{{stop}}}} = ~min({ramp_stop:.1f}~,~text{{mm/s}}^2, "
+                    f"{d['a_mechanical_max']:.1f}~,~text{{mm/s}}^2) = ~mathbf{{{d['a_stop_conveyor']:.1f}~,~text{{mm/s}}^2}} "
+                    f"~quad (t~approx{d['ramp_stop_real_ms']:.1f}~,~text{{ms}})"
                 ))
                 st.latex(L(
-                    f"d_{{~text{{conveyor}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{stop}}}}}} = "
-                    f"{det_a['dist_freno_conveyor']:.3f}~,~text{{mm}}"
+                    f"g_{{~text{{conv}}}} = ~frac{{{d['a_stop_conveyor']:.1f}~,~text{{mm/s}}^2}}"
+                    f"{{9810~,~text{{mm/s}}^2}} = ~mathbf{{{s['g_conv']:.3f}~,~text{{G}}}}"
                 ))
+
+                st.markdown("**Step 3: Maximum Allowable Friction Acceleration**")
                 st.latex(L(
-                    f"~Delta d = {det_a['dist_freno_pieza']:.3f} - {det_a['dist_freno_conveyor']:.3f} = "
-                    f"~mathbf{{{A['d_desliza']:.3f}~,~text{{mm}}}}"
+                    f"a_{{~text{{max~_piece}}}} = ~mu ~cdot g = {mu:.2f} ~cdot 9810~,~text{{mm/s}}^2 "
+                    f"= {d['a_max_pieza']:.2f}~,~text{{mm/s}}^2 ~quad (~mu = ~mathbf{{{mu:.2f}~,~text{{G}}}})"
                 ))
-            else:
-                aviso("success", f"**STABLE LOAD:** g_conv ({A['g_conv']:.3f} G) ≤ μ ({ss.mu_a:.2f} G).")
+
+                st.markdown("**Step 4: Slip Decision Criterion**")
+                if s['desliza']:
+                    aviso("error", f"**SLIP DETECTED:** g_conv ({s['g_conv']:.3f} G) > μ ({mu:.2f} G).")
+                    st.markdown("**Step 5: Relative Slip Distance (Δd)**")
+                    st.latex(L(
+                        f"d_{{~text{{piece}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{max~_piece}}}}}} = "
+                        f"{d['dist_freno_pieza']:.3f}~,~text{{mm}}"
+                    ))
+                    st.latex(L(
+                        f"d_{{~text{{conveyor}}}} = ~frac{{v_{{~text{{slow}}}}^2}}{{2 ~cdot a_{{~text{{stop}}}}}} = "
+                        f"{d['dist_freno_conveyor']:.3f}~,~text{{mm}}"
+                    ))
+                    st.latex(L(
+                        f"~Delta d = {d['dist_freno_pieza']:.3f} - {d['dist_freno_conveyor']:.3f} = "
+                        f"~mathbf{{{s['d_desliza']:.3f}~,~text{{mm}}}}"
+                    ))
+                else:
+                    aviso("success", f"**STABLE LOAD:** g_conv ({s['g_conv']:.3f} G) ≤ μ ({mu:.2f} G).")
 
     # ------------------------------------------
     with tab_ab:
@@ -1751,35 +1968,14 @@ def pagina_conveyor():
             aviso("info", "Turn on **Compare with Profile B** in the sidebar to compare two PLC configurations. "
                     "Profile B starts as a copy of Profile A.")
         else:
-            st.subheader("Acceleration per state transition — Profile B")
-            st.caption("Deltas are B − A (red = B demands more friction than A).")
-            fa1b, fa2b, fa3b = st.columns(3)
-            fa1b.metric("ACCEL_FAST B", f"{det_b['g_accel']:.3f} G",
-                        delta=f"{(det_b['g_accel'] - det_a['g_accel']):.3f} G", delta_color="inverse")
-            fa2b.metric("DECEL_TO_SLOW B", f"{det_b['g_decel']:.3f} G",
-                        delta=f"{(det_b['g_decel'] - det_a['g_decel']):.3f} G", delta_color="inverse")
-            fa3b.metric("DECEL_TO_STOP B", f"{B['g_conv']:.3f} G",
-                        delta=f"{(B['g_conv'] - A['g_conv']):.3f} G", delta_color="inverse")
-            st.caption(f"Most critical phase in B: **{det_b['peor_fase_label']}** ({det_b['g_max_fase']:.3f} G)")
-
-            st.divider()
-            st.subheader("Profile A vs Profile B — final stop & positioning")
-            c_b1, c_b2, c_b3, c_b4 = st.columns(4)
-            c_b1.metric("Deceleration Profile B", f"{B['g_conv']:.3f} G",
-                        delta=f"{(B['g_conv'] - A['g_conv']):.3f} G", delta_color="inverse")
-            c_b2.metric("Part Slip Profile B", f"{B['d_desliza']:.3f} mm",
-                        delta=f"{(B['d_desliza'] - A['d_desliza']):.3f} mm", delta_color="inverse")
-            c_b3.metric("Overrun Profile B", f"{B['overrun']:.2f} mm",
-                        delta=f"{(B['overrun'] - A['overrun']):.2f} mm", delta_color="inverse")
-            c_b4.metric("Overrun Time Profile B", f"{B['overrun_time']*1000:.0f} ms",
-                        delta=f"{(B['overrun_time'] - A['overrun_time'])*1000:.0f} ms", delta_color="inverse")
-
-            c_b5, c_b6 = st.columns(2)
-            c_b5.metric("Final Part Position B", f"{(B['pos'][-1] + B['d_desliza']):.2f} mm",
-                        delta=f"{(B['pos'][-1] + B['d_desliza']) - (A['pos'][-1] + A['d_desliza']):.2f} mm",
-                        delta_color="inverse")
-            c_b6.metric("Cycle Time Profile B", f"{B['t'][-1]:.2f} s",
-                        delta=f"{(B['t'][-1] - A['t'][-1]):.2f} s", delta_color="inverse")
+            st.caption("Every key value of both profiles side by side. B − A is B minus A.")
+            ajustes, acel, paro = tablas_comparacion(A, B, ss)
+            st.subheader("Stop & positioning")
+            st.dataframe(paro, hide_index=True)
+            st.subheader("Acceleration on the part")
+            st.dataframe(acel, hide_index=True)
+            st.subheader("Settings")
+            st.dataframe(ajustes, hide_index=True)
 
     # ------------------------------------------
     with tab_fund:
