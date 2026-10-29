@@ -1568,12 +1568,15 @@ def figura_zona_paro(perfiles):
     pos_stop = None
     previos = [zona_paro(s) for _, s, _, _ in perfiles]
     t_fin = max([z["t_fin"] for z in previos if z is not None] or [0.005])
-    x_fin = 1.15 * t_fin * 1000.0
+    # Curves continue flat after everything has stopped, leaving room for the Δ dimension lines
+    x_fin = 2.1 * t_fin * 1000.0
+    cotas = []     # (x, Δ, profile, color) of each stop-offset dimension line
     for (nombre, s, color, dash), z0 in zip(perfiles, previos):
         if z0 is None:
             continue
-        z = zona_paro(s, tau_rango=(-0.35 * t_fin, 1.15 * t_fin))
+        z = zona_paro(s, tau_rango=(-0.35 * t_fin, 2.1 * t_fin))
         pos_stop = z["pos_stop"]
+        cotas.append(((1.25 + 0.55 * len(cotas)) * t_fin * 1000.0, z["part_fin"], nombre, color))
         y_lo = min(y_lo, float(np.min(z["conv"])))
         y_hi = max(y_hi, float(np.max(z["part"])))
         nombre_conv = f"{nombre} · conveyor" if s["desliza"] else f"{nombre} · conveyor = part (no slip)"
@@ -1608,7 +1611,7 @@ def figura_zona_paro(perfiles):
     ys = [finales[i][0] for i in orden]
     for i in range(1, len(ys)):
         ys[i] = max(ys[i], ys[i - 1] + sep)
-    x_lab = x_fin * 1.05
+    x_lab = x_fin * 1.03
     for i, y_lab in zip(orden, ys):
         y_pt, texto, color = finales[i]
         fig.add_trace(go.Scatter(x=[x_fin], y=[y_pt], mode="markers", showlegend=False, hoverinfo="skip",
@@ -1618,17 +1621,54 @@ def figura_zona_paro(perfiles):
                            xanchor="left", standoff=5, font=dict(family=FONT_UI, size=11, color=INK))
     y_hi = max(y_hi, ys[-1] + sep)
 
+    # Δ stop offset: dimension line from the stop sensor to where the part rests, with the sensor correction
+    caja = (y_hi - y_lo) * 42.0 / (altura - m_top - m_bot)   # label box height in data units
+    # Box centered on its dimension line, or just above it when the line is shorter than the box
+    y_cajas = [d / 2.0 if d > 1.3 * caja else d + 0.65 * caja for _, d, _, _ in cotas]
+    for i in sorted(range(len(cotas)), key=lambda i: y_cajas[i])[1:]:
+        otros = [y_cajas[j] for j in range(len(cotas)) if j != i and y_cajas[j] <= y_cajas[i]]
+        if otros and y_cajas[i] - max(otros) < caja:
+            y_cajas[i] = max(otros) + caja
+    for (x_c, delta, nombre, color), y_caja in zip(cotas, y_cajas):
+        fig.add_annotation(x=x_c, y=delta, ax=x_c, ay=0, xref="x", yref="y", axref="x", ayref="y",
+                           text="", showarrow=True, arrowside="end+start", arrowhead=2, arrowsize=0.9,
+                           arrowwidth=1.4, arrowcolor=color)
+        titulo = f"{nombre} Δ" if len(cotas) > 1 else "Δ"
+        fig.add_annotation(
+            x=x_c, y=y_caja, xref="x", yref="y", showarrow=False, align="center",
+            text=(f"<b>{titulo} {f'{delta:+.2f}'.replace('-', '−')} mm</b><br>"
+                  f"<span style='font-size:10px;color:{INK_2}'>sensor {f'{-delta:+.2f}'.replace('-', '−')}</span>"),
+            bgcolor="rgba(255,255,255,0.96)", bordercolor=color, borderwidth=1, borderpad=4,
+            font=dict(family=FONT_UI, size=11, color=INK),
+        )
+
     fig.add_hline(y=0, line_width=1.2, line_dash="dash", line_color=COL_SENSOR_STOP)
     fig.add_vline(x=0, line_width=1.2, line_dash="dot", line_color=MUTED)
     entrada_leyenda(fig, f"Stop sensor position · {pos_stop:.0f} mm", COL_SENSOR_STOP, "dash")
     entrada_leyenda(fig, "Stop sensor triggers (t = 0)", MUTED, "dot")
     fig.update_layout(title="Stop zone — where the conveyor and the part come to rest")
     fig.update_xaxes(title_text="Time after the stop sensor triggers (ms)",
-                     range=[float(-0.35 * x_fin / 1.15), x_fin * 2.05])
+                     range=[float(-0.35 * t_fin * 1000.0), x_fin * 1.75])
     fig.update_yaxes(title_text="Distance past the stop sensor (mm)", range=[y_lo, y_hi])
     leyenda_abajo(fig, altura, legend_y=-0.2)
     fig.update_layout(margin=dict(t=m_top, b=m_bot))
     return fig
+
+
+def correccion_sensores(s, sensor_distance):
+    """How far to move the sensors so the part rests exactly where the stop sensor is today.
+
+    The approach only depends on the sensors' positions relative to each other, so shifting both by −Δ
+    shifts the whole stop by −Δ. Moving only the stop sensor also works while the creep stretch
+    (distance covered at SPEED_AUTO_SLOW before the stop sensor) is longer than Δ.
+    """
+    z = zona_paro(s)
+    if z is None:
+        return None
+    det = s["det"]
+    delta = z["part_fin"]
+    return dict(delta=delta, stop_nuevo=det["pos_stop"] - delta, red_nuevo=det["pos_sensor_red"] - delta,
+                creep=sensor_distance - det["dist_needed_decel"])
 
 
 def texto_zona_paro(s, nombre):
@@ -1807,13 +1847,48 @@ def pagina_conveyor():
         if fig_zona is not None:
             st.plotly_chart(fig_zona, theme=None)
         st.caption(
-            "Zoom on the last millimeters. Distance from the stop sensor to where the part rests ≈ "
+            "Zoom on the last millimeters. The arrows mark Δ, how far past the stop sensor each part rests, and "
+            "the sensor move that cancels it (see Sensor correction below). Distance from the stop sensor to where the part rests ≈ "
             "SPEED_AUTO_SLOW² / (2 × the deceleration the part actually follows): the conveyor's stop "
             "deceleration, or μ·g if the part slides. A slower creep speed can therefore stop shorter "
             "even with a softer RAMP_STOP."
         )
         for nombre, s, _, _ in perfiles_zona:
             st.markdown(texto_zona_paro(s, f"Profile {nombre}" if comparar else "Profile A"))
+
+        st.subheader("Sensor correction")
+        st.caption(
+            "Δ is how far past the stop sensor the part comes to rest. Moving the sensors back by Δ makes "
+            "the part rest exactly where the stop sensor is today (Total Conveyor Length)."
+        )
+        for nombre, s, color, _ in perfiles_zona:
+            k = nombre.lower()
+            c = correccion_sensores(s, ss[f"sensor_distance_{k}"])
+            if c is None:
+                continue
+            if comparar:
+                clave_perfil(f"Profile {nombre}", color)
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Stop offset Δ (part past the stop sensor)", f"{c['delta']:+.2f} mm".replace("-", "−"))
+            m2.metric("Move the stop sensor to", f"{c['stop_nuevo']:.2f} mm",
+                      delta=f"{-c['delta']:+.2f} mm", delta_color="off")
+            m3.metric("Move the slowdown sensor to", f"{c['red_nuevo']:.2f} mm",
+                      delta=f"{-c['delta']:+.2f} mm", delta_color="off",
+                      help="Keeps the same Slowdown Sensor Distance, so the whole approach shifts by Δ.")
+            notas = []
+            if c["creep"] - c["delta"] >= 1.0:
+                notas.append(f"Moving only the stop sensor also works: the creep stretch at SPEED_AUTO_SLOW "
+                             f"({c['creep']:.1f} mm) is longer than Δ.")
+            elif c["creep"] >= 0:
+                notas.append(f"Move both sensors: the creep stretch at SPEED_AUTO_SLOW ({c['creep']:.1f} mm) leaves "
+                             f"less than 1 mm of margin over Δ, so moving only the stop sensor could trigger the stop "
+                             f"while the conveyor is still slowing down.")
+            if s["desliza"]:
+                notas.append(f"The part slips ({s['d_desliza']:.2f} mm), so where it rests depends on the real μ — "
+                             f"the correction is only as accurate as μ. Lowering RAMP_STOP until it no longer "
+                             f"slips makes the stop repeatable.")
+            if notas:
+                st.caption(" ".join(notas))
 
         st.subheader("Positioning & cycle time")
 
